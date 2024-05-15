@@ -1,63 +1,30 @@
-"""Quantum control environment evolution."""
-
-"""Quantum control environment.
-
-Struct of a quantum control environment. The evolution depends on the chosen
-model function, input function, shaping function, pulse function(s), observation
-function, and reward function. The action space can be continuous or discrete.
-
-Kwargs:
-  * model_function: Quantum model function.
-  * input_function: Input function.
-  * shaping_function: Shaping function.
-  * pulse_function: Pulse (amplitude) function(s).
-  * observation_function: Observation function that dicates the observation that
-        the agent recieves at each time step.
-  * reward_functon: Reward function that dicates the reward that the agent
-        recieves at each time step.
-  * continuous: Whether to to use continuous actions (default: true).
-  * rng: Random number generator (default: default_rng()).
-
-Fields:
-  * rng: Random number generator.
-  * action_space: Allowed actions on the environment.
-  * model_function: The paramters and Hamiltonian components of the control
-        environment as well as an evolution step.
-  * input_function: Input change function.
-  * shaping_function: Pulse shaping function.
-  * pulse_function: Pulse (amplitude and noise) function(s).
-  * observation_function: Observation function.
-  * observation_space: Space of possible state elements of the environment.
-  * reward_function: Reward function.
-  * reward_space: Space of reward functions.
-"""
 struct QuantumControlEnvironment{
-    R <: AbstractRNG,
-    𝔸 <: AbstractVector,
-    ℳ <: ModelFunction,
-    ℐ <: InputFunction,
-    𝒮 <: ShapingFunction,
-    𝒫 <: Union{Nothing, Function, Chain},
-    𝒪 <: ObservationFunction,
-    ℛ <: RewardFunction,
+    I <: InputFunction,
+    S <: ShapingFunction,
+    P <: Union{PulseFunction, Chain{<:Tuple{Vararg{PulseFunction}}}},
+    M <: ModelFunction,
+    O <: ObservationFunction,
+    R <: RewardFunction,
 }
-    rng::R
-    action_space::𝔸
-    model_function::ℳ
-    input_function::ℐ
-    shaping_function::𝒮
-    pulse_function::𝒫
-    observation_function::𝒪
+    input_function::I
+    shaping_function::S
+    action_space::Vector{ClosedInterval{Float64}}
+    n_controls::Int
+    n_inputs::Int
+    pulse_function::P
+    model_function::M
+    observation_function::O
     observation_space::Vector{ClosedInterval{Float64}}
-    reward_function::ℛ
+    reward_function::R
     reward_space::ClosedInterval{Float64}
+    _t_step::Base.RefValue{Int}
     _state::Vector{Float64}
-    _stateₜ::SubArray{Float64, 0, Vector{Float64}, Tuple{Int64}, true}
-    _stateₚ::SubArray{Float64, 1, Vector{Float64}, Tuple{UnitRange{Int}}, true}
-    _stateₘ::ReshapedArray{
+    _state_t::SubArray{Float64, 0, Vector{Float64}, Tuple{Int64}, true}
+    _state_p::SubArray{Float64, 1, Vector{Float64}, Tuple{UnitRange{Int}}, true}
+    _state_m::Base.ReshapedArray{
         Complex{Float64},
         2,
-        ReinterpretArray{
+        Base.ReinterpretArray{
             Complex{Float64},
             1,
             Float64,
@@ -66,13 +33,13 @@ struct QuantumControlEnvironment{
         },
         Tuple{},
     }
-    _stateₗ::SubArray{
+    _state_l::SubArray{
         Complex{Float64},
         2,
-        ReshapedArray{
+        Base.ReshapedArray{
             Complex{Float64},
             2,
-            ReinterpretArray{
+            Base.ReinterpretArray{
                 Complex{Float64},
                 1,
                 Float64,
@@ -88,199 +55,223 @@ struct QuantumControlEnvironment{
     }
 end
 
+"""
+    QuantumControlEnvironment(
+        ;
+        input_function::InputFunction,
+        shaping_function::ShapingFunction,
+        pulse_function::Union{
+            PulseFunction, Chain{<:Tuple{Vararg{PulseFunction}}}
+        },
+        model_function::ModelFunction,
+        observation_function::ObservationFunction,
+        reward_function::RewardFunction,
+    )
+
+Struct of a quantum control environment. The evolution depends on the chosen
+input function, shaping function, pulse function(s), model function, observation
+function, and reward function.
+
+Kwargs:
+  * `input_function`: Input function.
+  * `shaping_function`: Shaping function.
+  * `pulse_function`: Pulse (amplitude) function(s).
+  * `model_function`: Quantum model function.
+  * `observation_function`: Observation function that dicates the observation
+        that the agent recieves at each time step.
+  * `reward_functon`: Reward function that dicates the reward that the agent
+        recieves at each time step.
+
+Fields:
+  * `input_function`: Input change function.
+  * `shaping_function`: Pulse shaping function.
+  * `action_space`: Allowed actions on the environment.
+  * `n_controls`: Number of controls.
+  * `n_inputs`: Number of inputs (corresponding to number of actions).
+  * `pulse_function`: Pulse (amplitude and noise) function(s).
+  * `model_function`: The paramters and Hamiltonian components of the control
+        environment as well as an evolution step.
+  * `observation_function`: Observation function.
+  * `observation_space`: Space of possible state elements of the environment.
+  * `reward_function`: Reward function.
+  * `reward_space`: Space of reward functions.
+"""
 function QuantumControlEnvironment(
     ;
-    model_function::ModelFunction,
     input_function::InputFunction,
     shaping_function::ShapingFunction,
-    pulse_function::Union{
-        Nothing, PulseFunction, Chain{<:Tuple{Vararg{PulseFunction}}}
-    },
+    pulse_function::Union{PulseFunction, Chain{<:Tuple{Vararg{PulseFunction}}}},
+    model_function::ModelFunction,
     observation_function::ObservationFunction,
     reward_function::RewardFunction,
-    rng::AbstractRNG = default_rng(),
-    continuous::Bool = true,
 )
-    if isnothing(pulse_function)
-        lₚ = []
-    else
-        lₚ = length(pulse_function)
-        if isnothing(lₚ)
-            lₚ = []
-        end
-    end
     if !allequal(
         [
-            length(model_function.H_controls),
-            input_function.ϵₙ,
-            size(shaping_function.pulse_history, 1),
-            lₚ...,
+            _n_ctrls(input_function),
+            _n_ctrls(shaping_function),
+            (
+                isnothing(_n_ctrls(pulse_function))
+                ? []
+                : _n_ctrls(pulse_function)
+            )...,
+            _n_ctrls(model_function),
         ]
     )
         throw(
             ArgumentError(
-                "Number of control Hamiltonians must be equal to number of"
-                * " controls given in input function, the shaping function, and"
-                * " if included, the noise function parameters in the pulse"
-                * " functions."
+                "Number of control Hamiltonians must be equal to"
+                * "`length(input_function.control_min)`, the first axis of "
+                * " `shaping_function.pulse_history`, and"
+                * " `length(pulse_function)` if it contains noise injectors."
             )
         )
     end
-    if model_function.tₙ != size(shaping_function.pulse_history, 2)
+    n_controls = size(shaping_function.pulse_history, 1)
+    if !allequal(
+        [
+            _n_ts(shaping_function),
+            (
+                isnothing(_n_ts(pulse_function))
+                ? []
+                : _n_ts(pulse_function)
+            )...,
+        ]
+    )
         throw(
             ArgumentError(
-                "Number of time steps must be equal to the number of time steps"
-                * " in the shaping function."
+                "Second axis of `shaping_function.pulse_history` must be equal"
+                * " to the time-step length of `pulse_function` if it contains"
+                * " noise injectors."
             )
         )
     end
-
-    if continuous
-        if input_function isa StepInput
-            action_space = ClosedInterval.(
-                -input_function.Δϵ, input_function.Δϵ
-            )
-        else
-            action_space = ClosedInterval.(
-                input_function.ϵₘᵢₙ, input_function.ϵₘₐₓ
+    n_inputs = _n_inpts(shaping_function)
+    if (
+        isa(reward_function, RobustGateFidelity)
+        | isa(reward_function, NormalisedReward{<:RobustGateFidelity})
+    )
+        if has_noise(model_function) | has_noise(pulse_function)
+            throw(
+                ArgumentError(
+                    "Use a `model_function` and `pulse_function` without noise"
+                    * " in the environment if using `RobustGateFidelity`."
+                )
             )
         end
-    else
-        action_space = OneTo(
-            (2 + (InputFunction <: StepInput)) ^ input_function.ϵₙ
-        )
     end
 
     _state = vcat(
-        model_function.tₙ,
-        zeros(Float64, input_function.ϵₙ),
+        n_inputs,
+        zeros(Float64, n_controls),
         copy(
             vec(
                 reinterpret(
                     Float64,
-                    Matrix{Complex{Float64}}(
-                        I,
-                        size(model_function(rand(Float64, input_function.ϵₙ))),
-                    ),
+                    Matrix{Complex{Float64}}(I, _m_size(model_function)),
                 )
             )
         ),
     )
-    _stateₜ = view(_state, 1)
-    _stateₚ = view(_state, 2 : 1 + input_function.ϵₙ)
-    _stateₘ = reshape(
-        reinterpret(
-            Complex{Float64}, @view _state[2 + input_function.ϵₙ : end]
-        ),
-        isqrt((length(_state) - 1 - input_function.ϵₙ) ÷ 2),
-        isqrt((length(_state) - 1 - input_function.ϵₙ) ÷ 2),
+    _state_t = view(_state, 1)
+    _state_p = view(_state, 2 : 1 + n_controls)
+    _state_m = reshape(
+        reinterpret(Complex{Float64}, @view _state[2 + n_controls : end]),
+        isqrt((length(_state) - 1 - n_controls) ÷ 2),
+        isqrt((length(_state) - 1 - n_controls) ÷ 2),
     )
-    _stateₗ = @view _stateₘ[
-        model_function._computational_indices,
-        model_function._computational_indices,
+    _state_l = @view _state_m[
+        computational_indices(model_function),
+        computational_indices(model_function),
     ]
-
     _state_space = vcat(
-        ClosedInterval(0.0, convert(Float64, model_function.tₙ)),
-        ClosedInterval.(input_function.ϵₘᵢₙ, input_function.ϵₘₐₓ),
-        ClosedInterval.(-ones(2 * length(_stateₘ)), ones(2 * length(_stateₘ))),
+        ClosedInterval(0.0, convert(Float64, n_inputs)),
+        ClosedInterval.(input_function.control_min, input_function.control_max),
+        ClosedInterval.(
+            -ones(2 * length(_state_m)), ones(2 * length(_state_m))
+        ),
     )
     return QuantumControlEnvironment(
-        rng,
-        action_space,
-        model_function,
         input_function,
         shaping_function,
+        action_space(input_function),
+        n_controls,
+        n_inputs,
         pulse_function,
+        model_function,
         observation_function,
-        observation_function(_state_space),
+        observation_space(observation_function, _state_space),
         reward_function,
         reward_space(reward_function),
+        Base.RefValue(0),
         _state,
-        _stateₜ,
-        _stateₚ,
-        _stateₘ,
-        _stateₗ,
+        _state_t,
+        _state_p,
+        _state_m,
+        _state_l,
     )
 end
 
-##################
-# Public Methods #
-##################
-"""Get the pulse history of an environment."""
+"""
+    reset!(env::QuantumControlEnvironment, rng::AbstractRNG = default_rng())
 
-"""Environment reset function.
+Reset the environment to it's initial state.
 
 Args:
-  * env: Quantum control environment.
+  * `env`: Quantum control environment.
+  * `rng`: Random number generator (default: [`Random.default_rng()`]()).
 
 Returns:
-  * Vector{Float64}: An initial environment observation.
+  * `Vector{Float64}`: An initial environment observation.
 """
-function reset!(env::QuantumControlEnvironment)
-    reset!(env.model_function, env.rng)
+function reset!(
+    env::QuantumControlEnvironment, rng::AbstractRNG = default_rng()
+)
+    reset!(env.model_function, rng)
     reset!(env.shaping_function)
-    if !isnothing(env.pulse_function)
-        reset!(env.pulse_function, env.rng)
-    end
+    reset!(env.pulse_function, rng)
 
-    env._stateₜ .= env.model_function.tₙ
-    env._stateₚ .= zero(env._stateₚ)
-    env._stateₘ .= Matrix(I, size(env._stateₘ))
+    env._t_step[] = 0
+    env._state_t .= env.n_inputs
+    env._state_p .= zero(env._state_p)
+    env._state_m .= Matrix(I, size(env._state_m))
     return env.observation_function(env._state)
 end
 
-"""Environment step function.
+"""
+    step!(env::QuantumControlEnvironment, action::Vector{Float64})
 
 Input a valid action to take a step in the environment modifying it's state and
 getting an observation, reward, and a termination if ended.
 
 Args:
-  * env: Quantum control environment.
-  * action: Chosen action that the agent takes.
+  * `env`: Quantum control environment.
+  * `action`: Chosen action that the agent takes.
 
 Returns:
-  * Tuple: A tuple containing:
-    - observation (Vector{Float64}): An observation of the quantum control
+  * `Tuple`: A tuple containing:
+    - `observation` (`Vector{Float64}`): An observation of the quantum control
         environment.
-    - done (Bool): Indicates if the environment has terminated.
-    - reward (Float64): The reward recieved.
+    - `done` (`Bool`): Indicates if the environment has terminated.
+    - `reward` (`Float64`): The reward recieved.
 """
-function step!(
-    env::QuantumControlEnvironment, action::Union{Vector{Float64}, Int}
-)
-    if !_is_valid_action(env, action)
+function step!(env::QuantumControlEnvironment, action::Vector{Float64})
+    if !is_valid_input(env.action_space, action)
         throw(DomainError(action, "Action is not valid."))
     end
 
-    env._stateₜ .-= 1
-    env._stateₚ .= env.input_function(env._stateₚ, action)
+    env._t_step[] += 1
+    env._state_t .-= 1
+    env._state_p .= env.input_function(env._state_p, action)
 
-    ϵ̄ₜ = env.shaping_function(env._stateₚ)
-    for t in axes(ϵ̄ₜ, 2)
-        if isnothing(env.pulse_function)
-            U = env.model_function(ϵ̄ₜ[:, t])
-        else
-            U = env.model_function(env.pulse_function(ϵ̄ₜ[:, t]))
-        end
-        # env._stateₘ .= matmul(U, env._stateₘ)
-        # matmul!(env._stateₘ, U, env._stateₘ)
-        env._stateₘ .= U * env._stateₘ
-        if !is_unitary(env._stateₘ)
-            throw(DomainError(env._stateₘ, "State is not unitary."))
-        end
+    t_bar, epsilon_t_bar = env.shaping_function(env._t_step[], env._state_p)
+    for i in axes(epsilon_t_bar, 2)
+        u = env.model_function(
+            env.pulse_function(t_bar[i], epsilon_t_bar[:, i])
+        )
+        env._state_m .= u * env._state_m
     end
     done = env._state[1] <= 0
-    reward = env.reward_function(env._stateₗ, done)
+    reward = env.reward_function(env._state_l, done)
     observation = env.observation_function(env._state)
     return observation, done, reward
-end
-
-_is_valid_action(env::QuantumControlEnvironment, a::Int) = a ∈ env.action_space
-
-function _is_valid_action(env::QuantumControlEnvironment, a::Vector{Float64})
-    for i in eachindex(a)
-        (a[i] - 1e-5 * sign(a[i])) ∈ env.action_space[i] || return false
-    end
-    return true
 end

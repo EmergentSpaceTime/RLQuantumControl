@@ -1,5 +1,8 @@
 .vscode
 docs/build
-dcs/site
+misc/
+examples/quantum_dot/configs
+examples/quantum_dot/data
+examples/quantum_dot/figures
 Manifest.toml
 .DS_Store

@@ -1,110 +1,154 @@
-"""Contains various input types to the controller (e.g. step-change or direct)
-that creates a output pulse from a given action.
-"""
+"""Abstract callable struct that creates a output pulse from a given action from
+the controller. Custom inputs must define `control_min` and `control_max` fields
+and a [`action_space`]() method.
 
+These callables have the argument signature:
+```math
+    \\mathscr{I}(\\epsilon_{t - 1}, a_{t})\\rightarrow\\epsilon_{t}
+```
+"""
 abstract type InputFunction <: Function end
 
 
-"""Step input function.
+struct IdentityInput <: InputFunction
+    control_min::Vector{Float64}
+    control_max::Vector{Float64}
+end
 
-Creates a callable that takes an action and changes the current pulse by a
-number in (-Δϵ, Δϵ) for continuous actions or (±1 or 0) * Δϵ for discrete
-actions, but within the bounds of (ϵₘᵢₙ, ϵₘₐₓ).
+"""
+    IdentityInput(
+        n_controls::Int,
+        control_min::Vector{<:Real} = fill(-Inf, n_controls),
+        control_max::Vector{<:Real} = fill(Inf, n_controls),
+    )
 
+Identity callable generating an action space of
+``[\\epsilon_{\\text{min}}``, ``\\epsilon_{\\text{max}}]``:
 ```math
-ℐ(ϵₜ₋₁, aₜ) = ϵₜ₋₁ + aₜ
+    \\mathscr{I}(\\epsilon_{t - 1}, a_{t}) = a_{t}
 ```
 
 Args:
-  * ϵₙ: Number of controls.
+  * `n_controls`: Number of control pulses.
 
 Kwargs:
-  * ϵₘᵢₙ: Minimum pulse amplitude (default: fill(-Inf, ϵₙ)).
-  * ϵₘₐₓ: Maximum pulse amplitude (default: fill(Inf, ϵₙ)).
-  * Δϵ: Maximal change in pulse amplitude (default: fill(Inf, ϵₙ)).
+  * `control_min`: Minimum input values (default: [`fill(-Inf, n_controls)`]()).
+  * `control_max`: Maximum input values (default: [`fill(Inf, n_controls)`]()).
 
 Fields:
-  * ϵₙ: Number of controls.
-  * ϵₘᵢₙ: Minimum pulse amplitudes.
-  * ϵₘₐₓ: Maximum pulse amplitudes.
-  * Δϵ: Maximal change in pulse amplitudes.
+  * `control_min`: Minimum input values.
+  * `control_max`: Maximum input values.
 """
-struct StepInput <: InputFunction
-    ϵₙ::Int
-    ϵₘᵢₙ::Vector{Float64}
-    ϵₘₐₓ::Vector{Float64}
-    Δϵ::Vector{Float64}
-end
-
-function StepInput(
-    ϵₙ::Int;
-    ϵₘᵢₙ::Vector{<:Real} = fill(-Inf, ϵₙ),
-    ϵₘₐₓ::Vector{<:Real} = fill(Inf, ϵₙ),
-    Δϵ::Vector{<:Real} = fill(Inf, ϵₙ),
+function IdentityInput(
+    n_controls::Int;
+    control_min::Vector{<:Real} = fill(-Inf, n_controls),
+    control_max::Vector{<:Real} = fill(Inf, n_controls),
 )
-    if (ϵₙ != length(ϵₘᵢₙ)) & (ϵₙ != length(ϵₘₐₓ)) & (ϵₙ != length(Δϵ))
+    n_controls < 1 && throw(ArgumentError("`n_controls` must be >= 1."))
+    if (
+        !=(length(control_min), n_controls)
+        | !=(length(control_max), n_controls)
+    )
         throw(
             DimensionMismatch(
-                "Length of ϵₘᵢₙ, ϵₘₐₓ, and Δϵ must be equal to ϵₙ."
+                "Length of `control_min` and `control_max` must be equal to"
+                * " `n_controls`."
             )
         )
     end
-    return StepInput(ϵₙ, ϵₘᵢₙ, ϵₘₐₓ, Δϵ)
+    return IdentityInput(control_min, control_max)
 end
 
-function (i::StepInput)(ϵₜ₋₁::AbstractVector{Float64}, a::Vector{Float64})
-    return clamp(ϵₜ₋₁ + a, i.ϵₘᵢₙ, i.ϵₘₐₓ)
+(::IdentityInput)(::AbstractVector{Float64}, a::Vector{Float64}) = a
+
+action_space(i::IdentityInput) = ClosedInterval.(i.control_min, i.control_max)
+
+
+struct StepInput <: InputFunction
+    control_min::Vector{Float64}
+    control_max::Vector{Float64}
+    delta_control::Vector{Float64}
 end
 
-function (i::StepInput)(ϵₜ₋₁::AbstractVector{Float64}, a::Int)
-    aᵥ = @. ($digits(a - 1; base=3, pad=i.ϵₙ) - 1) * i.Δϵ
-    return clamp(ϵₜ₋₁ + aᵥ, i.ϵₘᵢₙ, i.ϵₘₐₓ)
-end
+"""
+    StepInput(
+        n_controls::Int;
+        control_min::Vector{<:Real} = fill(-Inf, n_controls),
+        control_max::Vector{<:Real} = fill(Inf, n_controls),
+        delta_control::Vector{<:Real} = fill(Inf, n_controls),
+    )
 
-
-"""Direct input function.
-
-Creates a callable that takes an action and outputs a pulse in (ϵₘᵢₙ, ϵₘₐₓ) for
-continuous actions or ϵₘᵢₙ / ϵₘₐₓ for discrete actions.
-
+Step-limited input callable that generates an action space of
+``[-\\Delta\\epsilon``, ``\\Delta\\epsilon]`` such that:
 ```math
-ℐ(ϵₜ₋₁, aₜ) = aₜ
+    \\mathscr{I}(\\epsilon_{t - 1}, a_{t}) = \\epsilon_{t - 1} + a_{t}
 ```
 
 Args:
-  * ϵₙ: Number of controls.
+  * `n_controls`: Number of control pulses.
 
 Kwargs:
-  * ϵₘᵢₙ: Minimum pulse amplitude (default: fill(-Inf, ϵₙ)).
-  * ϵₘₐₓ: Maximum pulse amplitude (default: fill(Inf, ϵₙ)).
+  * `control_min`: Minimum input values (default: [`fill(-Inf, n_controls)`]()).
+  * `control_max`: Maximum input values (default: [`fill(Inf, n_controls)`]()).
+  * `delta_control`: Maximal change in input values (default:
+        [`fill(Inf, n_controls)`]()).
 
 Fields:
-  * ϵₙ: Number of control pulses.
-  * ϵₘᵢₙ: Minimum pulse amplitudes.
-  * ϵₘₐₓ: Maximum pulse amplitudes.
+  * `control_min`: Minimum input values.
+  * `control_max`: Maximum input values.
+  * `delta_control`: Maximal change in input values.
 """
-struct DirectInput <: InputFunction
-    ϵₙ::Int
-    ϵₘᵢₙ::Vector{Float64}
-    ϵₘₐₓ::Vector{Float64}
-end
-
-function DirectInput(
-    ϵₙ::Int,
-    ϵₘᵢₙ::Vector{<:Real} = fill(-Inf, ϵₙ),
-    ϵₘₐₓ::Vector{<:Real} = fill(Inf, ϵₙ),
+function StepInput(
+    n_controls::Int;
+    control_min::Vector{<:Real} = fill(-Inf, n_controls),
+    control_max::Vector{<:Real} = fill(Inf, n_controls),
+    delta_control::Vector{<:Real} = fill(Inf, n_controls),
 )
-    if (ϵₙ != length(ϵₘᵢₙ)) & (ϵₙ != length(ϵₘₐₓ))
-        throw(DimensionMismatch("Length of ϵₘᵢₙ and ϵₘₐₓ must be equal to ϵₙ."))
+    n_controls <= 0 && throw(ArgumentError("`n_controls` must be >= 1."))
+    if (
+        !=(length(control_min), n_controls)
+        | !=(length(control_max), n_controls)
+        | !=(length(delta_control), n_controls)
+    )
+        throw(
+            DimensionMismatch(
+                "Length of `control_min`, `control_max`, and `delta_control`"
+                * "must be equal to `n_controls`."
+            )
+        )
     end
-    return DirectInput(ϵₙ, ϵₘᵢₙ, ϵₘₐₓ)
+    return StepInput(control_min, control_max, delta_control)
 end
 
-function (::DirectInput)(::AbstractVector{Float64}, a::Vector{Float64})
-    return a
+function (i::StepInput)(
+    control_tm1::AbstractVector{Float64}, a::Vector{Float64}
+)
+    return clamp(control_tm1 + a, i.control_min, i.control_max)
 end
 
-function (i::DirectInput)(::AbstractVector{Float64}, a::Int)
-    pulse = digits(a - 1; base=2, pad=i.ϵₙ)
-    return i.ϵₘᵢₙ + (i.ϵₘₐₓ - i.ϵₘᵢₙ) * pulse
+action_space(i::StepInput) = ClosedInterval.(-i.delta_control, i.delta_control)
+
+
+"""
+    is_valid_input(action_space::ClosedInterval{Float64}, a::Vector{Float64})
+
+Check if the given input is within the action space.
+
+Args:
+  * `action_space`: The action space.
+  * `a`: Action to check.
+
+Returns:
+  * `Bool`: Whether the action is within the action space.
+"""
+function is_valid_input(
+    action_space::Vector{ClosedInterval{Float64}}, a::Vector{Float64}
+)
+    for i in eachindex(a)
+        in((a[i] - 1e-6 * sign(a[i])), action_space[i]) || return false
+    end
+    return true
 end
+
+
+_n_ctrls(i::InputFunction) = length(i.control_min)
