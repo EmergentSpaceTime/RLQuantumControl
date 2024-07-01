@@ -4,7 +4,7 @@ can recieve to decide actions. Custom observations should define an
 
 These callables have the argument signature:
 ```math
-    \\mathscr{O}(s_{t})
+    \\mathscr{O}(s_{t})\\rightarrow o_{t}
 ```
 """
 abstract type ObservationFunction <: Function end
@@ -366,21 +366,25 @@ function NormalisedObservation(
         base_function,
         zeros(Float64, output_dim),
         ones(Float64, output_dim),
-        Base.RefValue(1),
+        Base.RefValue(0),
     )
 end
 
-function (n::NormalisedObservation)(state::Vector{Float64})
-    observation = n.base_function(state)
-    delta_obs = observation .- n.observations_mean
-    @. n.observations_mean += delta_obs / (n.count[] + 1)
-    @. n.observations_var = (
-        n.observations_var * n.count[] / (n.count[] + 1)
-        + (delta_obs ^ 2) * n.count[] / (n.count[] + 1) ^ 2
+function (o::NormalisedObservation)(state::Vector{Float64})
+    obs = o.base_function(state)
+    # Update mean
+    delta_obs = obs .- o.observations_mean
+    @. o.observations_mean += delta_obs / (o.count[] + 1)
+    # Update variance
+    delta_obs_new = obs .- o.observations_mean
+    @. o.observations_var = (
+        o.count[] * o.observations_var / (o.count[] + 1)
+        + delta_obs * delta_obs_new / (o.count[] + 1)
     )
-    n.count[] += 1
+    # Update count
+    o.count[] += 1
     return @. (
-        (observation - n.observations_mean) / sqrt(n.observations_var + 1e-6)
+        (obs - o.observations_mean) / sqrt(o.observations_var + 1e-6)
     )
 end
 

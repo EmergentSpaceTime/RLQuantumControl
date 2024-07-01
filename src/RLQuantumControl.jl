@@ -14,7 +14,7 @@ module RLQuantumControl
     using Random: AbstractRNG, default_rng
     using StatsBase: mean, sample
 
-    import Flux: hasaffine
+    import Flux: hasaffine, trainable
 
 
     # Environment files
@@ -56,6 +56,7 @@ module RLQuantumControl
     export reset!
 
     # Agent exports
+    export GPT
     export Memory, ReplayBuffer
     export Agent, SACAgent, SACNetworks, SACParameters, evaluation_steps!,
         get_action, get_random_action, learn!, trainer_steps!

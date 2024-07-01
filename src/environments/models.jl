@@ -1,6 +1,7 @@
 #################
 # Natural Units #
 #################
+# 1 / ns = 6.582119569e-7 eV
 # 1mT = 0.087953 GHz
 # 1 eV = (1 / 6.582119e-7) GHz
 
@@ -14,7 +15,7 @@ random noise or parameters which can differ episode to episode), and a
 
 These callables have the argument signature:
 ```math
-    \\mathscr{M}(\\epsilon_{t})
+    \\mathscr{M}(\\epsilon_{t})\\rightarrow\\xi_{t}
 ```
 """
 abstract type ModelFunction end
@@ -157,7 +158,7 @@ function reset!(m::QuantumDot2, rng::AbstractRNG = default_rng())
         m._H_drift_episode .= sum(m.H_drifts)
     else
         @. m._H_drift_episode = $sum(
-            m.H_drifts * (1 + $rand(rng, 3) * m._sigma_bb)
+            m.H_drifts * (1 + $randn(rng, 3) * m._sigma_bb)
         )
     end
     return nothing
@@ -222,4 +223,4 @@ end
 _n_ctrls(m::ModelFunction) = length(m.H_controls)
 
 
-_m_size(m::QuantumDot2) = size(m.H_drifts[1])
+_m_size(::QuantumDot2) = 6, 6

@@ -1,1 +1,5 @@
-1: Fix observation functions
+1: Robust training with different noise regimes
+    Check standard deviation to confirm
+2: Fix quantum dot model parameters:
+    Current state: Fast noise seems off in units as is magnetic field gradient
+3: Fix observation functions

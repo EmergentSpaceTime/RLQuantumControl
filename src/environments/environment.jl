@@ -33,26 +33,6 @@ struct QuantumControlEnvironment{
         },
         Tuple{},
     }
-    _state_l::SubArray{
-        Complex{Float64},
-        2,
-        Base.ReshapedArray{
-            Complex{Float64},
-            2,
-            Base.ReinterpretArray{
-                Complex{Float64},
-                1,
-                Float64,
-                SubArray{
-                    Float64, 1, Vector{Float64}, Tuple{UnitRange{Int}}, true
-                },
-                false,
-            },
-            Tuple{},
-        },
-        Tuple{UnitRange{Int}, UnitRange{Int}},
-        false,
-    }
 end
 
 """
@@ -179,10 +159,6 @@ function QuantumControlEnvironment(
         isqrt((length(_state) - 1 - n_controls) ÷ 2),
         isqrt((length(_state) - 1 - n_controls) ÷ 2),
     )
-    _state_l = @view _state_m[
-        computational_indices(model_function),
-        computational_indices(model_function),
-    ]
     _state_space = vcat(
         ClosedInterval(0.0, convert(Float64, n_inputs)),
         ClosedInterval.(input_function.control_min, input_function.control_max),
@@ -207,7 +183,6 @@ function QuantumControlEnvironment(
         _state_t,
         _state_p,
         _state_m,
-        _state_l,
     )
 end
 
@@ -271,7 +246,7 @@ function step!(env::QuantumControlEnvironment, action::Vector{Float64})
         env._state_m .= u * env._state_m
     end
     done = env._state[1] <= 0
-    reward = env.reward_function(env._state_l, done)
+    reward = env.reward_function(env._state_m, done)
     observation = env.observation_function(env._state)
     return observation, done, reward
 end

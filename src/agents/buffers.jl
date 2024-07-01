@@ -63,15 +63,18 @@ function update_and_get_index!(b::ReplayBuffer)
 end
 
 function sample_buffer(
-    buffer::ReplayBuffer, mini_batch_size::Int, rng::AbstractRNG = default_rng()
+    buffer::ReplayBuffer,
+    device::AbstractDevice,
+    batch_size::Int,
+    rng::AbstractRNG = default_rng(),
 )
     upto = upto_index(buffer)
-    indices = sample(rng, Base.OneTo(upto), mini_batch_size; replace=false)
+    indices = sample(rng, Base.OneTo(upto), batch_size; replace=false)
     return (
-        buffer.observations_t[:, indices],
-        buffer.actions[:, indices],
-        buffer.rewards[indices],
-        buffer.dones[indices],
-        buffer.observations_tp1[:, indices],
+        device(buffer.observations_t[:, indices]),
+        device(buffer.actions[:, indices]),
+        device(unsqueeze(buffer.rewards[indices]; dims=1)),
+        device(unsqueeze(buffer.dones[indices]; dims=1)),
+        device(buffer.observations_tp1[:, indices]),
     )
 end

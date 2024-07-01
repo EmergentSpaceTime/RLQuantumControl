@@ -9,35 +9,30 @@ using Flux: relu, glorot_uniform
 
 using DelimitedFiles: readdlm
 using TOML: parsefile
-using HDF5
+using HDF5: h5open, create_dataset, write, close
 using BSON: @save, @load
 
 include("../../src/RLQuantumControl.jl")
 using .RLQuantumControl
 
-
-# Setup config
+################
+# Setup config #
+################
 CONFIG = parsefile(ARGS[1])
-# CONFIG = parsefile("configs/config_59.toml")
 EPISODES = ARGS[2]
-# EPISODES = "10"
 SEED = CONFIG["seed"]
-# SEED = 1338
 LABEL = ["", "", "", ""]
 
-# Setup seed
+# Setup seed and custom labels
 seed!(SEED)
 LABEL[1] = "_seed=" * string(SEED)
-# Setup environment
-model_function = QuantumDot2(
-    ;
-    delta_t=CONFIG["protocol_length"] / CONFIG["inputs"],
-    sigma_b=(
-        CONFIG["reward"] == "robust" ? 0.0 : CONFIG["noises_drift"] * 0.0263859
-    ),
-)
-LABEL[2] = "_ndrift=" * string(CONFIG["noises_drift"])
+LABEL[2] = "_shaping=" * CONFIG["shaping"]
+LABEL[3] = "_plength=" * string(CONFIG["protocol_length"])
+LABEL[4] = "_srate=" * string(CONFIG["sampling_rate"])
 
+#####################
+# Setup environment #
+#####################
 input_function = IdentityInput(
     3; control_min=fill(-5.4, 3), control_max=fill(2.4, 3)
 )
@@ -54,15 +49,47 @@ elseif CONFIG["shaping"] == "fir"
         boundary_values=hcat(fill(-5.4, 3), fill(-5.4, 3)),
         sampling_rate=CONFIG["sampling_rate"],
     )
-    LABEL[3] = "_neps=" * string(CONFIG["noises_epsilon"])
+elseif CONFIG["shaping"] == "gauss"
+    mu = 1.9
+    scale = 0.91
+    sigma = 0.5
+    shaping_function = FilterShaping(
+        3,
+        CONFIG["n_inputs"],
+        Spline1D(
+            -5:0.1:5,
+            @. (
+                scale * exp(-0.5 * (((-5:0.1:5) - mu) / sigma) ^ 2)
+                / (sigma * sqrt(2π))
+            );
+            bc="zero",
+        );
+        boundary_values=hcat(fill(-5.4, 3), fill(-5.4, 3)),
+        sampling_rate=CONFIG["sampling_rate"],
+    )
 end
+
+model_function = QuantumDot2(
+    ;
+    delta_t=(
+        CONFIG["protocol_length"]
+        / (
+            hasfield(typeof(shaping_function), :shaped_pulse_history)
+            ? size(shaping_function.shaped_pulse_history, 2)
+            : size(shaping_function.pulse_history, 2)
+        )
+    ),
+    sigma_b=(
+        CONFIG["reward"] == "robust" ? 0.0 : CONFIG["noises_drift"] * 0.0116098
+    ),
+)
 
 if CONFIG["pulse"] == "none"
     pulse_function = ExponentialPulse()
 elseif CONFIG["pulse"] == "both"
     if CONFIG["reward"] != "robust"
         pulse_function = Chain(
-            StaticNoiseInjection(3, CONFIG["noises_epsilon"] * 0.0294),
+            StaticNoiseInjection(3, CONFIG["noises_epsilon_s"] * 0.0294),
             ColouredNoiseInjection(
                 3,
                 (
@@ -71,9 +98,10 @@ elseif CONFIG["pulse"] == "both"
                     (CONFIG["inputs"] + 5) * CONFIG["sampling_rate"]
                 ),
                 (
-                    CONFIG["noises_epsilon"]
-                    * 4e-20
-                    / (model_function.delta_t * 1e-10 * 0.272e-3 ^ 2)
+                    CONFIG["noises_epsilon_f"]
+                    * 8e-16
+                    * (1 / 0.272e-3 ^ 2)
+                    * (1 / (model_function.delta_t * 1e-9)) ^ (1 - 0.7)
                 ),
                 0.7,
             ),
@@ -84,25 +112,26 @@ elseif CONFIG["pulse"] == "both"
     end
 end
 
-observation_function = FullObservation()
+if CONFIG["observation"] == "full"
+    observation_function = FullObservation()
+end
 
 if CONFIG["reward"] == "sparse"
     reward_function = NormalisedReward(
         SparseGateFidelity([1 0 0 0; 0 1 0 0; 0 0 0 1; 0 0 1 0]), 0.99
     )
-    LABEL[4] = "_reward=sparse"
 elseif CONFIG["reward"] == "robust"
     reward_function = NormalisedReward(
         RobustGateFidelity(
             [1 0 0 0; 0 1 0 0; 0 0 0 1; 0 0 1 0],
             QuantumDot2(
                 ;
-                delta_t = model_function.delta_t,
-                sigma_b=CONFIG["noises_drift"] * 0.0263859
+                delta_t=model_function.delta_t,
+                sigma_b=CONFIG["noises_drift"] * 0.0116098
             ),
             shaping_function.shaped_pulse_history,
             Chain(
-                StaticNoiseInjection(3, CONFIG["noises_epsilon"] * 0.0294),
+                StaticNoiseInjection(3, CONFIG["noises_epsilon_s"] * 0.0294),
                 ColouredNoiseInjection(
                     3,
                     (
@@ -111,9 +140,10 @@ elseif CONFIG["reward"] == "robust"
                         (CONFIG["inputs"] + 5) * CONFIG["sampling_rate"]
                     ),
                     (
-                        CONFIG["noises_epsilon"]
-                        * 4e-20
-                        / (model_function.delta_t * 1e-10 * 0.272e-3 ^ 2)
+                        CONFIG["noises_epsilon_f"]
+                        * 8e-16
+                        * (1 / 0.272e-3 ^ 2)
+                        * (1 / (model_function.delta_t * 1e-9)) ^ (1 - 0.7)
                     ),
                     0.7,
                 ),
@@ -122,7 +152,6 @@ elseif CONFIG["reward"] == "robust"
         ),
         0.99,
     )
-    LABEL[4] = "_reward=robust"
 end
 
 env = QuantumControlEnvironment(
@@ -161,8 +190,8 @@ agent = SACAgent(
 r, l = learn!(agent, env)
 
 prefix = (
-    "data/qdot"
-    * "_episodes="
+    "data/plength_shaping_srate_noises/"
+    * "episodes="
     * EPISODES
     * LABEL[1]
     * LABEL[2]
@@ -173,9 +202,9 @@ prefix = (
 @save prefix * "_environment.bson" env
 @save prefix * "_agent.bson" agent
 
-d_file = HDF5.h5open(prefix * "_data_0.h5", "cw")
-fset = HDF5.create_dataset(d_file, "r", eltype(r), size(r))
-fset = HDF5.create_dataset(d_file, "l", eltype(l), size(l))
-HDF5.write(d_file["r"], r)
-HDF5.write(d_file["l"], l)
-HDF5.close(d_file)
+d_file = h5open(prefix * "_data=0.h5", "cw")
+fset = create_dataset(d_file, "r", eltype(r), size(r))
+fset = create_dataset(d_file, "l", eltype(l), size(l))
+write(d_file["r"], r)
+write(d_file["l"], l)
+close(d_file)

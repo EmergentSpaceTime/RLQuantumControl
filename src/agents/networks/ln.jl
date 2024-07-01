@@ -53,7 +53,8 @@ hasaffine(a::CustomLayerNorm) = a.affine
 function Base.show(io::IO, l::CustomLayerNorm)
     print(io, "CustomLayerNorm(", join(l.size, ", "))
     l.λ === identity || print(io, ", ", l.λ)
-    hasaffine(l) || print(io, ", affine=false")
+    hasaffine(l) || print(io, "; affine=false")
+    l.diag isa Scale && l.diag.bias == false && print(io, "; bias=false")
     print(io, ")")
     return nothing
 end

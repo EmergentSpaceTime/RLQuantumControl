@@ -1,8 +1,7 @@
 """
     SACParameters(
-        action_scale::Vector{Float32},
-        action_bias::Vector{Float32},
-        H_bar::Float32;
+        action_scale::AbstractVecOrMat{Float32},
+        action_bias::AbstractVecOrMat{Float32},
         kwargs...,
     )
 
@@ -10,9 +9,9 @@ Parameter struct for SAC algorithm.
 
 Fields:
   * `action_scale`: The scale to match the action space of the continuous
-        environment.
+        environment (on device memory).
   * `action_bias`: The bias to match the action space of the continous
-        environment.
+        environment (on device memory).
   * `H_bar`: Target entropy, usually equals to -dim(`action_space`).
   * `capacity`: Number of transitions stored in memory (default: `100000`).
   * `hiddens`: Dimensions of hidden layers (default: `[256, 256]`).
@@ -40,10 +39,10 @@ Fields:
         buffer (default: `50`).
   * `episodes`: Number of total episodes (default: `5000`).
 """
-@kwdef struct SACParameters
-    action_scale::Vector{Float32}
-    action_bias::Vector{Float32}
-    H_bar::Float32
+@kwdef struct SACParameters{A <: AbstractVecOrMat{Float32}} <: AgentParameters
+    action_scale::A
+    action_bias::A
+    H_bar::Float32 = length(action_scale)
     capacity::Int = 100000
     hiddens::Vector{Int} = [256, 256]
     log_var_min::Float32 = -10
@@ -66,24 +65,185 @@ Fields:
 end
 
 
+struct SACNetworks{
+    B <: Union{Nothing, GPT},
+    P <: Chain,
+    Q <: Chain,
+    A <: AbstractArray{Float32, 0},
+    T <: AbstractVecOrMat{Float32},
+} <: AgentNetworks
+    base_layer::B
+    policy_layers::P
+    Q_1_layers::Q
+    Q_1_target_layers::Q
+    Q_2_layers::Q
+    Q_2_target_layers::Q
+    log_alpha::A
+    log_var_min::Float32
+    log_var_max::Float32
+    action_scale::T
+    action_bias::T
+end
+
+@layer SACNetworks
+
+function trainable(n::SACNetworks)
+    if isnothing(n.base_layer)
+        return (
+            n.policy_layers,
+            n.Q_1_layers,
+            n.Q_1_target_layers,
+            n.Q_2_layers,
+            n.Q_2_target_layers,
+            n.log_alpha,
+        )
+    end
+    return (
+        n.base_layer,
+        n.policy_layers,
+        n.Q_1_layers,
+        n.Q_1_target_layers,
+        n.Q_2_layers,
+        n.Q_2_target_layers,
+        n.log_alpha,
+    )
+end
+
+function SACNetworks(
+    observation_dim::Int,
+    action_dim::Int;
+    action_scale::AbstractVecOrMat{Float32},
+    action_bias::AbstractVecOrMat{Float32},
+    log_var_min::Float32 = -10f0,
+    log_var_max::Float32 = 3f0,
+    n_q::Int = 1,
+    hidden_dims::Vector{Int} = [128, 128],
+    q_dropout::Float32 = 0.0f0,
+    q_ln::Bool = false,
+    ffn_activation::Function = relu,
+    ffn_bias::Bool = true,
+    init::Function = glorot_normal,
+    base_layer::Union{Nothing, GPT} = nothing,
+)
+    policy_layers = _create_ffn(
+        isnothing(base_layer) ? observation_dim : _embedding_dim(base_layer),
+        action_dim,
+        true;
+        hidden_dims=hidden_dims,
+        activation=ffn_activation,
+        bias=ffn_bias,
+        init=init,
+    )
+    Q_1_layers = _create_ffn(
+        observation_dim + action_dim,
+        n_q;
+        hidden_dims=hidden_dims,
+        dropout=iszero(q_dropout) ? nothing : q_dropout,
+        layer_norm=q_ln,
+        activation=ffn_activation,
+        bias=ffn_bias,
+        init=init,
+    )
+    Q_2_layers = _create_ffn(
+        observation_dim + action_dim,
+        n_q;
+        hidden_dims=hidden_dims,
+        dropout=iszero(q_dropout) ? nothing : q_dropout,
+        layer_norm=q_ln,
+        activation=ffn_activation,
+        bias=ffn_bias,
+        init=init,
+    )
+    log_alpha = zeros(Float32, ())
+    return SACNetworks(
+        base_layer,
+        policy_layers,
+        Q_1_layers,
+        deepcopy(Q_1_layers),
+        Q_2_layers,
+        deepcopy(Q_2_layers),
+        log_alpha,
+        action_scale,
+        action_bias,
+        log_var_min,
+        log_var_max,
+    )
+end
+
+function Base.show(io::IO, m::SACNetworks)
+    print(io, "SACNetworks(")
+    if isnothing(m.base_layer)
+        print(io, size(m.policy_layers[1].weight, 2), " => (")
+    else
+        if isa(m.base_layer.token_embedding, Embedding)
+            print(io, size(m.base_layer.token_embedding.weight, 2), " => (")
+        else
+            print(io, size(m.base_layer.token_embedding[1].weight, 2), " => (")
+        end
+    end
+    print(
+        io,
+        size(m.policy_layers[end].layer_1.weight, 1),
+        ", ",
+        size(m.Q_1_layers[end].weight, 1),
+        ")"
+    )
+    isnothing(m.base_layer) || print(io, ", ", m.base_layer)
+    if !iszero(isa.(m.Q_1_layers, Dropout))
+        print(io, "; ", "q_dropout=", m.Q_1_layers[2].p)
+    end
+    iszero(isa.(m.Q_1_layers, CustomLayerNorm)) || print(io, "; ", "q_ln=true")
+    print(io, ")")
+    return nothing
+end
+
+function get_action(
+    n::SACNetworks{GPT},
+    o::Union{AbstractMatrix{Float32}, AbstractVector{Int}},
+    rng::AbstractRNG,
+)
+    mu, log_var_u = n.base_layer(unsqueeze(o; dims=ndims(o) + 1))[:, end, 1]
+    log_var = @. (
+        n.log_var_min
+        + (tanh(log_var_u) + 1) * (n.log_var_max - n.log_var_min) / 2
+    )
+    action = @. (
+       tanh(mu + exp(log_var / 2) * randn(rng, Float32, $size(mu)))
+       * n.action_scale
+       + n.action_bias
+    )
+    return convert.(Float64, cpu(action))
+end
+
+
+
+
+
+
+
+
 struct SACAgent{
-    M <: ReplayBuffer,
+    P <: SACParameters,
     N <: SACNetworks,
+    M <: ReplayBuffer,
     O <: AbstractVector,
     D <: AbstractDevice,
-} <: Agent{M, N, O, D}
-    params::SACParameters
-    memory::M
+    R <: AbstractRNG,
+} <: Agent{P, N, M, O, D, R}
+    params::P
     networks::N
+    memory::M
     opt_states::O
     device::D
+    rng::R
 end
 
 """
     SACAgent(
-        env::QuantumControlEnvironment,
+        observation_dim::Int,
+        action_space::Vector{ClosedInterval{Float64}},
         device::AbstractDevice = FluxCPUDevice(),
-        rng::AbstractRNG = default_rng();
+        rng::AbstractRNG = default_rng(),
         kwargs...
     )
 
@@ -93,17 +253,18 @@ Struct of a agent that uses the Soft Actor Critic algorithm
 sample efficiency.
 
 Args:
-  * `env`: The environment that the agent learns. This just extracts relavant
-        information from the environment such as the observation and action
-        spaces.
+  * `observation_dim`: Environment observation dimension.
+  * `action_space`: Legal environment action space.
   * `device`: Device for neural networks (default: [`Flux.FluxCPUDevice()`]()).
-  * `rng`: Random number generator (default: [`Random.default_rng()`]()).
+  * `rng`: Device RNG for agent that should match the device (e.g.
+        [`CUDA.default_rng()`]()) (default: [`Random.default_rng()`]()).
 
 Kwargs:
-  * `activation`: Activation function for neural networks (default: relu).
+  * `activation`: Activation function for neural networks (default:
+        [`NNlib.relu`]()).
   * `init`: Initialisation function for neural networks (default:
-        glorot_normal).
-  * `params_kwargs`: Keyword arguments for SACParameters.
+        [`Flux.glorot_normal`]()).
+  * `params_kwargs`: Keyword arguments for `SACParameters`.
 
 Fields:
   * `params`: Hyper parameters for the agent.
@@ -111,45 +272,44 @@ Fields:
   * `networks`: Neural networks.
   * `opt_states`: Neural networks optimiser states.
   * `device`: Device for neural networks.
+  * `rng`: Device rng for agent.
 """
 function SACAgent(
-    env::QuantumControlEnvironment,
+    observation_dim::Int,
+    action_space::Vector{ClosedInterval{Float64}},
     device::AbstractDevice = FluxCPUDevice(),
-    rng::AbstractRNG = default_rng();
+    rng::Union{AbstractRNG, Vector{<:AbstractRNG}} = default_rng();
     activation::Function = relu,
     init::Function = glorot_normal,
     kwargs...,
 )
-    observation_dim = length(env.observation_space)
-    action_dim = length(env.action_space)
+    action_dim = length(action_space)
     action_scale = @. (
-        (rightendpoint(env.action_space) - leftendpoint(env.action_space)) / 2
+        (rightendpoint(action_space) - leftendpoint(action_space)) / 2
     )
     action_bias = @. (
-        (rightendpoint(env.action_space) + leftendpoint(env.action_space)) / 2
+        (rightendpoint(action_space) + leftendpoint(action_space)) / 2
     )
-    H_bar = -action_dim
 
     params = SACParameters(
         ;
         action_scale=action_scale,
         action_bias=action_bias,
-        H_bar=H_bar,
+        H_bar=-action_dim,
         kwargs...,
     )
     memory = ReplayBuffer(true, observation_dim, action_dim, params.capacity)
     networks = device(
         SACNetworks(
-            true,
             observation_dim,
-            action_dim,
-            params.use_tqc ? params.n_q : 1,
-            params.hiddens,
-            params.dropout,
-            params.layer_norm;
+            action_dim;
+            n_q=params.use_tqc ? params.n_q : 1,
+            hiddens=params.hiddens,
+            dropout=params.dropout,
+            layer_norm=params.layer_norm,
             activation=activation,
             init=init,
-            rng=rng,
+            rng,
         )
     )
     opt_states = [
@@ -164,122 +324,123 @@ function SACAgent(
             (1, networks.policy_layers),
             (2, networks.Q_1_layers),
             (3, networks.Q_2_layers),
-            (4, networks.logα),
+            (4, networks.log_alpha),
         ]
     ]
-    return SACAgent(params, memory, networks, opt_states, device)
+    return SACAgent(params, memory, networks, opt_states, device, rng)
 end
 
 """
-    get_action(
-        agent::SACAgent,
-        observation::Vector{Float64},
-        rng::AbstractRNG = default_rng(),
-    )
+    get_action(agent::SACAgent, observation::VecOrMat{Float64})
 
-Retrieve an action from a policy informed by the current observation.
+Retrieve an action from a policy informed by an environment observation.
 
 Args:
   * `agent`: The SAC agent.
-  * `observation`: The current observation.
-  * `rng`: Random number generator (default: [`Random.default_rng()`]()).
+  * `observation`: Environment observation.
 
 Returns:
-  * `Vector{Float64}`: The action to take.
+  * `VecOrMat{Float64}`: The actions to take.
 """
-function get_action(
-    agent::SACAgent,
-    observation::Vector{Float64},
-    rng::AbstractRNG = default_rng(),
-)
-    μ, log_var_u = cpu(
-        agent.networks.policy_layers(agent.device(f32(observation)))
-    )
+function get_action(agent::SACAgent, observation::VecOrMat{Float64})
+    μ, log_var_u = agent.networks.policy_layers(agent.device(f32(observation)))
     log_var = @. (
         agent.params.log_var_min
         + (tanh(log_var_u) + 1)
         * (agent.params.log_var_max - agent.params.log_var_min)
         / 2
     )
-    N_01 = randn(rng, Float32, length(μ))
     action = @. (
-       tanh(μ + exp(log_var / 2) * N_01) * agent.params.action_scale
+       tanh(μ + exp(log_var / 2) * $randn(agent.rng, Float32, $size(μ)))
+       * agent.params.action_scale
        + agent.params.action_bias
     )
-    return convert(Vector{Float64}, action)
+    return convert.(Float64, cpu(action))
 end
 
-function get_random_action(agent::SACAgent, rng::AbstractRNG = default_rng())
-    return convert(
-        Vector{Float64},
-        @. (
-            tanh($randn(rng, Float32, $length(agent.params.action_scale)))
-            * agent.params.action_scale
-            + agent.params.action_bias
-        )
+function get_random_action(agent::SACAgent)
+    action = @. (
+        tanh($randn(agent.rng, Float32, $size(agent.params.action_scale)))
+        * agent.params.action_scale
+        + agent.params.action_bias
     )
+    return convert.(Float64, cpu(action))
 end
 
-function evaluation_steps!(
-    agent::SACAgent,
-    env::QuantumControlEnvironment,
-    rng::AbstractRNG = default_rng(),
-)
+function evaluation_steps!(agent::SACAgent, env::QuantumControlEnvironment)
     sum_r = zero(Float64)
 
-    observation = reset!(env, rng)
+    observation = reset!(env, agent.rng)
     done = false
     while !done
         index = update_and_get_index!(agent.memory)
         agent.memory.observations_t[:, index] = observation
 
-        action = get_action(agent, observation, rng)
+        action = get_action(agent, observation)
         agent.memory.actions[:, index] = action
 
         observation, done, reward = step!(env, action)
         agent.memory.observations_tp1[:, index] = observation
-        # agent.memory.rewards[index] = reward[end]
-        agent.memory.rewards[index] = reward[1]
+        agent.memory.rewards[index] = reward
         agent.memory.dones[index] = done
-        sum_r += reward[1]
+
+        sum_r += reward
     end
     return sum_r
-end
-
-function _initial_steps!(
-    agent::SACAgent,
-    env::QuantumControlEnvironment,
-    rng::AbstractRNG = default_rng(),
-)
-    if (
-        (env.observation_function isa NormalisedObservation)
-        | (env.reward_function isa NormalisedReward)
-    )
-        for _ in 1:agent.params.warmup_normalisation_episodes
-            _ = reset!(env, rng)
-            done = false
-            while !done
-                _, done, _ = step!(env, get_random_action(agent, rng))
-            end
-        end
-    end
-    for _ in 1:agent.params.warmup_evaluation_episodes
-        _ = evaluation_steps!(agent, env, rng)
-    end
-    return nothing
 end
 
 function trainer_steps!(agent::SACAgent, rng::AbstractRNG = default_rng())
     metrics = zeros(Float32, 7, agent.params.training_steps)
     for i in 1:agent.params.training_steps
         if agent.params.use_tqc
-            metrics[:, i] = _update_agent_networks_tqc!(agent, rng)
+            metrics[:, i] = _update_agent_networks_tqc!(agent)
         else
             metrics[:, i] = _update_agent_networks_base!(agent, rng)
         end
         _polyak_update!(agent)
     end
     return vec(mean(metrics; dims=2))
+end
+
+function learn!(
+    agent::SACAgent,
+    env::QuantumControlEnvironment,
+    init::Bool = true,
+    rng::AbstractRNG = default_rng(),
+)
+    rewards = zeros(agent.params.episodes)
+    losses = zeros(Float32, 7, agent.params.episodes)
+
+    init && _initial_steps!(agent, env)
+
+    for episode in 1:agent.params.episodes
+        r_episode = evaluation_steps!(agent, env)
+        l_episode = trainer_steps!(agent, rng)
+
+        rewards[episode] = r_episode
+        losses[:, episode] = l_episode
+        println("Episode: ", episode, "| Reward: ", rewards[episode])
+    end
+    return rewards, losses
+end
+
+function _initial_steps!(agent::SACAgent, env::QuantumControlEnvironment)
+    if (
+        isa(env.observation_function, NormalisedObservation)
+        | isa(env.reward_function, NormalisedReward)
+    )
+        for _ in 1:agent.params.warmup_normalisation_episodes
+            _ = reset!(env, agent.rng)
+            done = false
+            while !done
+                _, done, _ = step!(env, get_random_action(agent))
+            end
+        end
+    end
+    for _ in 1:agent.params.warmup_evaluation_episodes
+        _ = evaluation_steps!(agent, env, agent.rng)
+    end
+    return nothing
 end
 
 function _polyak_update!(agent::SACAgent)
@@ -298,46 +459,44 @@ function _polyak_update!(agent::SACAgent)
     return nothing
 end
 
-function _update_agent_networks_tqc!(
-    agent::SACAgent, rng::AbstractRNG = default_rng()
-)
+function _update_agent_networks_tqc!(agent::SACAgent)
     losses = zeros(Float32, 7)
 
-    𝐬, 𝐚, 𝐫ᵥ, 𝐝ᵥ, 𝐬′ = sample_buffer(
-        agent.memory, agent.params.minibatch_size, rng
+    states, actions, rewards, dones, states_p = sample_buffer(
+        agent.memory, agent.device, agent.params.minibatch_size, agent.rng
     )
-    𝐝 = unsqueeze(𝐝ᵥ; dims=1)
-    𝐫 = unsqueeze(𝐫ᵥ; dims=1)
 
-    μ′, log_var′ᵤ = agent.networks.policy_layers(𝐬′)
-    log_var′ = @. (
+    mean_p, log_var_p_u = agent.networks.policy_layers(states_p)
+    log_var_p = @. (
         agent.params.log_var_min
-        + (tanh(log_var′ᵤ) + 1)
+        + (tanh(log_var_p_u) + 1)
         * (agent.params.log_var_max - agent.params.log_var_min)
         / 2
     )
-    u′ = @. μ′ + exp(log_var′ / 2) * $randn(rng, $eltype(μ′), $size(μ′))
-    v′ = tanh.(u′)
-    𝐚′ = @. v′ * agent.params.action_scale + agent.params.action_bias
+    n_01 = agent.device(randn(agent.rng, eltype(mean_p), size(mean_p)))
+    u_p = @. mean_p + exp(log_var_p / 2) * n_01
+    v_p = tanh.(u_p)
+
+    actions_p = @. v_p * agent.params.action_scale + agent.params.action_bias
     logπₐ′ = sum(
         @. (
-            -0.5f0 * (log_var′ + (u′ - μ′) ^ 2 / exp(log_var′) + log(2f0π))
-            - log(agent.params.action_scale * (1 - v′ ^ 2) + eps(Float32))
+            -0.5f0 * (log_var_p + (u_p - mean_p) ^ 2 / exp(log_var_p) + log(2f0π))
+            - log(agent.params.action_scale * (1 - v_p ^ 2) + eps(Float32))
         );
         dims=1,
     )
-    𝐬′𝐚′ = vcat(𝐬′, 𝐚′)
-    𝐬𝐚 = vcat(𝐬, 𝐚)
+    𝐬′𝐚′ = vcat(states_p, actions_p)
+    𝐬𝐚 = vcat(states, actions)
 
     Q₁ᵀ = agent.networks.Q_1_target_layers(𝐬′𝐚′)
     Q₂ᵀ = agent.networks.Q_2_target_layers(𝐬′𝐚′)
     Qᵀ = sort(vcat(Q₁ᵀ, Q₂ᵀ); dims=1)[1 : agent.params.k_q, :]
     y = unsqueeze(
         @. (
-            𝐫
+            rewards
             + agent.params.gamma
-            * (1 - 𝐝)
-            * (Qᵀ - exp(agent.networks.logα) * logπₐ′)
+            * (1 - dones)
+            * (Qᵀ - exp(agent.networks.log_alpha) * logπₐ′)
         );
         dims=2,
     )
@@ -371,14 +530,14 @@ function _update_agent_networks_tqc!(
     update!(agent.opt_states[3], agent.networks.Q_2_layers, ∇[1])
 
     losses[1], ∇ = withgradient(agent.networks.policy_layers) do m
-        μ, log_var_u = m(𝐬)
+        μ, log_var_u = m(states)
         log_var = @. (
             agent.params.log_var_min
             + (tanh(log_var_u) + 1)
             * (agent.params.log_var_max - agent.params.log_var_min)
             / 2
         )
-        u = @. μ + exp(log_var / 2) * $randn(rng, $eltype(μ), $size(μ))
+        u = @. μ + exp(log_var / 2) * $randn(agent.rng, $eltype(μ), $size(μ))
         v = tanh.(u)
         𝐚̃ = @. v * agent.params.action_scale + agent.params.action_bias
         logπᶿₐ̃ = vec(
@@ -392,7 +551,7 @@ function _update_agent_networks_tqc!(
                 dims=1,
             )
         )
-        𝐬𝐚̃ = vcat(𝐬, 𝐚̃)
+        𝐬𝐚̃ = vcat(states, 𝐚̃)
 
         Q̃₁ = unsqueeze(agent.networks.Q_1_layers(𝐬𝐚̃); dims=1)
         Q̃₂ = unsqueeze(agent.networks.Q_2_layers(𝐬𝐚̃); dims=1)
@@ -404,14 +563,14 @@ function _update_agent_networks_tqc!(
             losses[6] = mean(Q̃₁)
             losses[7] = mean(Q̃₂)
         end
-        return mean(@. exp(agent.networks.logα) * logπᶿₐ̃ - Q̃ₘₑₐₙ)
+        return mean(@. exp(agent.networks.log_alpha) * logπᶿₐ̃ - Q̃ₘₑₐₙ)
     end
     update!(agent.opt_states[1], agent.networks.policy_layers, ∇[1])
 
-    losses[3], ∇ = withgradient(agent.networks.logα) do m
+    losses[3], ∇ = withgradient(agent.networks.log_alpha) do m
         return mean(@. m * (losses[2] - agent.params.H_bar))
     end
-    update!(agent.opt_states[4], agent.networks.logα, ∇[1])
+    update!(agent.opt_states[4], agent.networks.log_alpha, ∇[1])
     return losses
 end
 
@@ -453,7 +612,7 @@ function _update_agent_networks_base!(
         𝐫
         + agent.params.gamma
         * (1 - 𝐝)
-        * (Qᵀ - exp(agent.networks.logα) * logπₐ′)
+        * (Qᵀ - exp(agent.networks.log_alpha) * logπₐ′)
     )
     losses[4], ∇ = withgradient(agent.networks.Q_1_layers) do m
         Q₁ = vec(m(𝐬𝐚))
@@ -497,34 +656,12 @@ function _update_agent_networks_base!(
             losses[6] = mean(Q₁)
             losses[7] = mean(Q₂)
         end
-        return mean(@. exp(agent.networks.logα) * logπᶿₐ̃ - Qₘᵢₙ)
+        return mean(@. exp(agent.networks.log_alpha) * logπᶿₐ̃ - Qₘᵢₙ)
     end
     update!(agent.opt_states[1], agent.networks.policy_layers, ∇[1])
-    losses[3], ∇ = withgradient(agent.networks.logα) do m
+    losses[3], ∇ = withgradient(agent.networks.log_alpha) do m
         return mean(@. m * (losses[2] - agent.params.H_bar))
     end
-    update!(agent.opt_states[4], agent.networks.logα, ∇[1])
+    update!(agent.opt_states[4], agent.networks.log_alpha, ∇[1])
     return losses
-end
-
-function learn!(
-    agent::SACAgent,
-    env::QuantumControlEnvironment,
-    init::Bool = true,
-    rng::AbstractRNG = default_rng(),
-)
-    rewards = zeros(agent.params.episodes)
-    losses = zeros(Float32, 7, agent.params.episodes)
-
-    init && _initial_steps!(agent, env, rng)
-
-    for episode in 1:agent.params.episodes
-        r_episode = evaluation_steps!(agent, env, rng)
-        l_episode = trainer_steps!(agent, rng)
-
-        rewards[episode] = r_episode
-        losses[:, episode] = l_episode
-        println("Episode: ", episode, "| Rewards: ", rewards[episode])
-    end
-    return rewards, losses
 end

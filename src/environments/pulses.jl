@@ -4,7 +4,7 @@ optional [`reset!`]() and [`has_noise`]() methods if required.
 
 These callables have the argument signature:
 ```math
-    \\mathscr{P}(t, \\epsilon_{t})
+    \\mathscr{P}(t, \\epsilon_{t})\\rightarrow\\epsilon_{t}'
 ```
 """
 abstract type PulseFunction <: Function end
@@ -211,11 +211,11 @@ function has_noise(c_p::Chain{<:Tuple{Vararg{PulseFunction}}})
     return false
 end
 
-function (n::Chain{<:Tuple{Vararg{PulseFunction}}})(
+function (c_p::Chain{<:Tuple{Vararg{PulseFunction}}})(
     t_step::Int, epsilon_t::Vector{Float64}
 )
-    for c in n
-        epsilon_t = c(t_step, epsilon_t)
+    for p in c_p
+        epsilon_t = p(t_step, epsilon_t)
     end
     return epsilon_t
 end

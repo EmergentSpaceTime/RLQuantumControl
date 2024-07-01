@@ -15,6 +15,7 @@ makedocs(
         "Quick Start" => "index.md",
         "Agents" => [
             "Overview" => "agents/overview.md",
+            "Networks" => "agents/networks.md",
             "Algorithms" => "agents/algorithms.md",
         ],
         "Environments" => [

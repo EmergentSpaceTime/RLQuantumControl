@@ -93,26 +93,24 @@ function power_noise(
     n_even = iseven(n)
     n_half = floor(Int, n / 2) - 1 * n_even
 
-    f = unsqueeze(collect(UnitRange(1, n_half)); dims=1) ./ n
-
-    power_half = @. 1 / f ^ (alpha / 2)
-    noise_half = @. $randn(rng, k, n_half) + $randn(rng, k, n_half) * im
-    shaped_half = power_half .* noise_half
+    f_powers = unsqueeze((n ./ UnitRange(1, n_half)) .^ (alpha / 2); dims=1)
+    gauss_noises = @. (
+        (1 / sqrt(2)) * ($randn(rng, k, n_half) + $randn(rng, k, n_half) * im)
+    )
+    shaped_half = f_powers .* gauss_noises
 
     if n_even
         shaped = hcat(
-            ones(k),
+            zeros(k),
             shaped_half,
-            fill(1 / ((n_half + 1) / n) ^ (alpha / 2), k),
+            randn(rng, k) .* (2 ^ (alpha / 2)),
             reverse(conj(shaped_half); dims=2),
         )
     else
-        shaped = hcat(ones(k), shaped_half, reverse(conj(shaped_half); dims=2))
+        shaped = hcat(zeros(k), shaped_half, reverse(conj(shaped_half); dims=2))
     end
 
-    noise_t = real(ifft(sqrt(scale / 2) .* shaped, 2))
-    if normalise
-        return @. noise_t / sqrt($mean(noise_t ^ 2, dims=2))
-    end
+    noise_t = real(ifft(sqrt(scale * n) .* shaped, 2))
+    normalise && return @. noise_t / sqrt($mean(noise_t ^ 2, dims=2))
     return noise_t
 end
