@@ -156,7 +156,7 @@ function reset!(s::FilterShaping{Matrix{Float64}})
 end
 
 function (s::FilterShaping{Nothing})(
-    t_step::Int, epsilon_t::AbstractVector{Float64}
+    t_step::Int, epsilon_t::AbstractVector{Float64}, dt::Float64
 )
     t_sub = range(s.sampling_rate * (t_step - 1) + 1, s.sampling_rate * t_step)
     s.pulse_history[:, t_sub] .= epsilon_t
@@ -164,7 +164,7 @@ function (s::FilterShaping{Nothing})(
         for n in 1 : t_step * s.sampling_rate
             s.shaped_pulse_history[:, i] += (
                 s.pulse_history[:, n]
-                * s.kernel((i - n) / s.sampling_rate) / s.sampling_rate
+                * s.kernel((i - n) * dt) * dt
             )
         end
     end
@@ -172,7 +172,7 @@ function (s::FilterShaping{Nothing})(
 end
 
 function (s::FilterShaping{Matrix{Float64}})(
-    t_step::Int, epsilon_t::AbstractVector{Float64}
+    t_step::Int, epsilon_t::AbstractVector{Float64}, dt::Float64
 )
     if t_step * 10 < (size(s.pulse_history, 2) - 10 * s.sampling_rate)
         t_sub = range(
@@ -184,7 +184,7 @@ function (s::FilterShaping{Matrix{Float64}})(
             for n in 1 : (t_step + 5) * s.sampling_rate
                 s.shaped_pulse_history[:, t] += (
                     s.pulse_history[:, n]
-                    * s.kernel((i - n) / s.sampling_rate) / s.sampling_rate
+                    * s.kernel((i - n) * dt) * dt
                 )
             end
         end
@@ -202,7 +202,7 @@ function (s::FilterShaping{Matrix{Float64}})(
         for n in 1 : (t_step + 10) * s.sampling_rate
             s.shaped_pulse_history[:, t] += (
                 s.pulse_history[:, n]
-                * s.kernel((i - n) / s.sampling_rate) / s.sampling_rate
+                * s.kernel((i - n) * dt) * dt
             )
         end
     end
