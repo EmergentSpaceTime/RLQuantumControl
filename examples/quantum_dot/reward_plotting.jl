@@ -8,7 +8,7 @@ gr()
 theme(:dao)
 
 # Load data
-folder_name = "examples/quantum_dot/data/plength_shaping_srate_noises/"
+folder_name = "examples/quantum_dot/data/inputs_plength_srate/"
 data_files = filter(x -> contains(x, "_data"), readdir(folder_name))
 choices = vcat(unique.(
     collect(eachcol(mapreduce(permutedims, vcat, split.(data_files, "_"))))
@@ -97,10 +97,10 @@ choices
 r_plots = [
     plot(
         axes(mean_r, ndims(mean_r)),
-        transpose(mean_r[j, :, i, :]);
-        labels=reshape(choices[4], 1, :),
+        transpose(mean_r[:, i, j, :]);
+        labels=reshape(choices[3], 1, :),
     )
-    for i in 1:2
+    for i in 1:4
     for j in 1:2
 ]
 # r_plots = [
@@ -125,9 +125,10 @@ r_plots = [
 plot(
     r_plots...;
     size=(1800, 600),
-    layout=(2, 2),
-    ylabel=["Reward" "" ""],
-    xlabel="Episodes",
+    layout=(4, 2),
+    ylabel=["" "" "" ""],
+    xlabel=["" "" "" ""],
+    legend=reshape([i == 1 ? true : false for i in 1:8], 1, :),
 )
 
 
