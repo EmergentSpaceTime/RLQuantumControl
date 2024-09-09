@@ -4,7 +4,9 @@ include a `shaped_pulse_history` field and a [`reset!`]() method if required.
 
 These callables have the argument signature:
 ```math
-    \\mathscr{S}(t, \\epsilon_{t})\\rightarrow(\\bar{t}, \\bar{\\epsilon}_{t})
+    \\mathscr{S}(t, \\epsilon_{t}, \\delta t)
+    \\rightarrow
+    (\\bar{t}, \\bar{\\epsilon}_{t})
 ```
 """
 abstract type ShapingFunction <: Function end
@@ -24,7 +26,7 @@ end
 
 Identity shaping callable that does not change the piece-wise pulses.
 ```math
-    \\mathscr{S}(t, \\epsilon_{t}) = (t, \\epsilon_{t})
+    \\mathscr{S}(t, \\epsilon_{t}, \\delta t) = (t, \\epsilon_{t})
 ```
 
 Args:
@@ -40,12 +42,8 @@ function IdentityShaping(n_controls::Int, n_inputs::Int)
     return IdentityShaping(zeros(n_controls, n_inputs))
 end
 
-function reset!(s::IdentityShaping)
-    s.pulse_history .= zero(s.pulse_history)
-    return nothing
-end
-
-function (s::IdentityShaping)(t_step::Int, epsilon_t::AbstractVector{Float64})
+function (s::IdentityShaping)(
+    t_step::Int, epsilon_t::AbstractVector{Float64}, ::Float64)
     s.pulse_history[:, t_step] = epsilon_t
     return t_step, s.pulse_history[:, t_step]
 end
@@ -69,19 +67,21 @@ end
     )
 
 Callable for convolution with a user-defined kernel given as a `Spline1D`
-object:
+object. The output is given by:
 ```math
-    \\mathscr{S}(t, \\epsilon_{t}) = \\left(
+    \\mathscr{S}(t, \\epsilon_{t}, \\delta t) = \\left(
         [t - 1, \\ldots, t],
         \\sum^{t}_{n}\\epsilon_{n}\\mathscr{K}[t - n]
     \\right)
 ```
+Where ``\\mathscr{K}`` is the kernel and ``[t - 1, \\ldots, t]`` represents the
+sub-time steps when oversampling.
 
 Args:
   * `n_controls`: Number of controls.
   * `n_inputs`: Number of inputs (corresponding to number of actions).
-  * `kernel`: Kernel that is convoluted with input pulses given as `Spline1D`
-        object.
+  * `kernel`: Kernel that is convoluted with input pulses given as a
+        `Dierckx.Spline1D` object.
 
 Kwargs:
   * `sampling_rate`: The (over-)sampling rate, i.e. the number of sub-steps per
@@ -156,15 +156,14 @@ function reset!(s::FilterShaping{Matrix{Float64}})
 end
 
 function (s::FilterShaping{Nothing})(
-    t_step::Int, epsilon_t::AbstractVector{Float64}
+    t_step::Int, epsilon_t::AbstractVector{Float64}, dt::Float64
 )
     t_sub = range(s.sampling_rate * (t_step - 1) + 1, s.sampling_rate * t_step)
     s.pulse_history[:, t_sub] .= epsilon_t
     for i in t_sub
         for n in 1 : t_step * s.sampling_rate
             s.shaped_pulse_history[:, i] += (
-                s.pulse_history[:, n]
-                * s.kernel((i - n) / s.sampling_rate) / s.sampling_rate
+                s.pulse_history[:, n] * s.kernel((i - n) * dt) * dt
             )
         end
     end
@@ -172,9 +171,12 @@ function (s::FilterShaping{Nothing})(
 end
 
 function (s::FilterShaping{Matrix{Float64}})(
-    t_step::Int, epsilon_t::AbstractVector{Float64}
+    t_step::Int, epsilon_t::AbstractVector{Float64}, dt::Float64
 )
-    if t_step * 10 < (size(s.pulse_history, 2) - 10 * s.sampling_rate)
+    if (
+        t_step * s.sampling_rate
+        < (size(s.pulse_history, 2) - 10 * s.sampling_rate)
+    )
         t_sub = range(
             s.sampling_rate * (t_step + 4) + 1, s.sampling_rate * (t_step + 5)
         )
@@ -183,8 +185,7 @@ function (s::FilterShaping{Matrix{Float64}})(
             t = i - 5 * s.sampling_rate
             for n in 1 : (t_step + 5) * s.sampling_rate
                 s.shaped_pulse_history[:, t] += (
-                    s.pulse_history[:, n]
-                    * s.kernel((i - n) / s.sampling_rate) / s.sampling_rate
+                    s.pulse_history[:, n] * s.kernel((i - n) * dt) * dt
                 )
             end
         end
@@ -201,8 +202,7 @@ function (s::FilterShaping{Matrix{Float64}})(
         t = i - 5 * s.sampling_rate
         for n in 1 : (t_step + 10) * s.sampling_rate
             s.shaped_pulse_history[:, t] += (
-                s.pulse_history[:, n]
-                * s.kernel((i - n) / s.sampling_rate) / s.sampling_rate
+                s.pulse_history[:, n] * s.kernel((i - n) * dt) * dt
             )
         end
     end

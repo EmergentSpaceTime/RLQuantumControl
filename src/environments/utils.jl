@@ -13,10 +13,10 @@ Returns:
   * `Matrix{ComplexF64}`: A random unitary matrix.
 """
 function rand_unitary(n::Int, rng::AbstractRNG = default_rng())
-    M = (randn(rng, n, n) + randn(rng, n, n) * im) / sqrt(2)
-    Q, R = qr(M)
-    L = diagm(sign.(diag(R)))
-    return Q * L
+    m = (randn(rng, n, n) + randn(rng, n, n) * im) / sqrt(2)
+    q, r = qr(m)
+    l = diagm(sign.(diag(r)))
+    return q * l
 end
 
 
@@ -71,7 +71,7 @@ Generates a power-law noise in the time domain with spectral density
 Args:
   * `n`: Length of time series to generate noise.
   * `k`: Number of independent noise sequences.
-  * `alpha`: Power of frequency (e.g. 0 for Gaussian noise).
+  * `alpha`: Power of frequency (e.g. `0` for Gaussian noise).
   * `scale`: Scaling of density factor of the noise (default: `1.0`).
   * `rng`: The random number generator to use (default:
         [`Random.default_rng()`]()).
