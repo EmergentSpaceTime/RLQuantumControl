@@ -1,10 +1,16 @@
 """Abstract callable struct that convolves an input pulse from the input
 function. Custom shapings should include a `pulse_history` field and may also
 include a `shaped_pulse_history` field and a [`reset!`]() method if required.
+Private methods `_n_inpts` and `_n_ts` are used to determine aspects of the
+shaping function and may need to be implemented for custom shapings.
 
 These callables have the argument signature:
 ```math
-    \\mathscr{S}(t, \\epsilon_{t})\\rightarrow(\\bar{t}, \\bar{\\epsilon}_{t})
+    {%
+        \\mathscr{S}(t, \\epsilon_{t}, \\delta t)
+        \\rightarrow
+        (\\bar{t}, \\bar{\\epsilon}_{t})
+    }
 ```
 """
 abstract type ShapingFunction <: Function end
@@ -13,6 +19,8 @@ function reset!(s::ShapingFunction)
     s.pulse_history .= zero(s.pulse_history)
     return nothing
 end
+
+_n_ctrls(s::ShapingFunction) = size(s.pulse_history, 1)
 
 
 struct IdentityShaping <: ShapingFunction
@@ -24,7 +32,7 @@ end
 
 Identity shaping callable that does not change the piece-wise pulses.
 ```math
-    \\mathscr{S}(t, \\epsilon_{t}) = (t, \\epsilon_{t})
+    \\mathscr{S}(t, \\epsilon_{t}, \\delta t) = (t, \\epsilon_{t})
 ```
 
 Args:
@@ -40,15 +48,14 @@ function IdentityShaping(n_controls::Int, n_inputs::Int)
     return IdentityShaping(zeros(n_controls, n_inputs))
 end
 
-function reset!(s::IdentityShaping)
-    s.pulse_history .= zero(s.pulse_history)
-    return nothing
-end
-
-function (s::IdentityShaping)(t_step::Int, epsilon_t::AbstractVector{Float64})
+function (s::IdentityShaping)(
+    t_step::Int, epsilon_t::AbstractVector{Float64}, ::Float64)
     s.pulse_history[:, t_step] = epsilon_t
     return t_step, s.pulse_history[:, t_step]
 end
+
+_n_inpts(s::IdentityShaping) = size(s.pulse_history, 2)
+_n_ts(s::IdentityShaping) = size(s.pulse_history, 2)
 
 
 struct FilterShaping{T <: Union{Nothing, Matrix{Float64}}} <: ShapingFunction
@@ -68,20 +75,21 @@ end
         boundary_values::Union{Nothing, Matrix{Float64}} = nothing,
     )
 
-Callable for convolution with a user-defined kernel given as a `Spline1D`
-object:
+Callable for convolution with a user-defined kernel given as a
+`Dierckx.Spline1D` object. The output is given by:
 ```math
-    \\mathscr{S}(t, \\epsilon_{t}) = \\left(
+    \\mathscr{S}(t, \\epsilon_{t}, \\delta t) = \\left(
         [t - 1, \\ldots, t],
         \\sum^{t}_{n}\\epsilon_{n}\\mathscr{K}[t - n]
     \\right)
 ```
+Where ``\\mathscr{K}`` is the kernel and ``[t - 1, \\ldots, t]`` represents the
+sub-time steps when oversampling.
 
 Args:
   * `n_controls`: Number of controls.
   * `n_inputs`: Number of inputs (corresponding to number of actions).
-  * `kernel`: Kernel that is convoluted with input pulses given as `Spline1D`
-        object.
+  * `kernel`: Kernel that is convoluted with input pulses.
 
 Kwargs:
   * `sampling_rate`: The (over-)sampling rate, i.e. the number of sub-steps per
@@ -89,8 +97,8 @@ Kwargs:
   * `boundary_values`: Desired boundary conditions on pulses, given as a
         (`n_controls`, `2`) matrix of beginnings and ends. The inputs are then
         appended by five values with the boundary values to ensure the shaped
-        pulse ends at the boundary values. If not specified, boundary defaults
-        to zeros (default: `nothing`).
+        pulse ends at the boundary values. If not specified, no boundary is
+        included (default: `nothing`).
 
 Fields:
   * `pulse_history`: History of input pulses.
@@ -141,20 +149,6 @@ function FilterShaping(
     )
 end
 
-function reset!(s::FilterShaping{Nothing})
-    s.pulse_history .= zero(s.pulse_history)
-    s.shaped_pulse_history .= zero(s.shaped_pulse_history)
-    return nothing
-end
-
-function reset!(s::FilterShaping{Matrix{Float64}})
-    s.pulse_history[:, 5 * s.sampling_rate + 1 : end - 5 * s.sampling_rate] .= (
-        zero(Float64)
-    )
-    s.shaped_pulse_history .= zero(s.shaped_pulse_history)
-    return nothing
-end
-
 function (s::FilterShaping{Nothing})(
     t_step::Int, epsilon_t::AbstractVector{Float64}, dt::Float64
 )
@@ -163,8 +157,7 @@ function (s::FilterShaping{Nothing})(
     for i in t_sub
         for n in 1 : t_step * s.sampling_rate
             s.shaped_pulse_history[:, i] += (
-                s.pulse_history[:, n]
-                * s.kernel((i - n) * dt) * dt
+                s.pulse_history[:, n] * s.kernel((i - n) * dt) * dt
             )
         end
     end
@@ -174,7 +167,10 @@ end
 function (s::FilterShaping{Matrix{Float64}})(
     t_step::Int, epsilon_t::AbstractVector{Float64}, dt::Float64
 )
-    if t_step * 10 < (size(s.pulse_history, 2) - 10 * s.sampling_rate)
+    if (
+        t_step * s.sampling_rate
+        < (size(s.pulse_history, 2) - 10 * s.sampling_rate)
+    )
         t_sub = range(
             s.sampling_rate * (t_step + 4) + 1, s.sampling_rate * (t_step + 5)
         )
@@ -183,8 +179,7 @@ function (s::FilterShaping{Matrix{Float64}})(
             t = i - 5 * s.sampling_rate
             for n in 1 : (t_step + 5) * s.sampling_rate
                 s.shaped_pulse_history[:, t] += (
-                    s.pulse_history[:, n]
-                    * s.kernel((i - n) * dt) * dt
+                    s.pulse_history[:, n] * s.kernel((i - n) * dt) * dt
                 )
             end
         end
@@ -201,8 +196,7 @@ function (s::FilterShaping{Matrix{Float64}})(
         t = i - 5 * s.sampling_rate
         for n in 1 : (t_step + 10) * s.sampling_rate
             s.shaped_pulse_history[:, t] += (
-                s.pulse_history[:, n]
-                * s.kernel((i - n) * dt) * dt
+                s.pulse_history[:, n] * s.kernel((i - n) * dt) * dt
             )
         end
     end
@@ -212,17 +206,24 @@ function (s::FilterShaping{Matrix{Float64}})(
     )
 end
 
+function reset!(s::FilterShaping{Nothing})
+    s.pulse_history .= zero(s.pulse_history)
+    s.shaped_pulse_history .= zero(s.shaped_pulse_history)
+    return nothing
+end
 
-_n_ctrls(s::ShapingFunction) = size(s.pulse_history, 1)
+function reset!(s::FilterShaping{Matrix{Float64}})
+    s.pulse_history[:, 5 * s.sampling_rate + 1 : end - 5 * s.sampling_rate] .= (
+        zero(Float64)
+    )
+    s.shaped_pulse_history .= zero(s.shaped_pulse_history)
+    return nothing
+end
 
-
-_n_inpts(s::IdentityShaping) = size(s.pulse_history, 2)
 _n_inpts(s::FilterShaping{Nothing}) = size(s.pulse_history, 2) ÷ s.sampling_rate
 
 function _n_inpts(s::FilterShaping{Matrix{Float64}})
     return (size(s.pulse_history, 2) - s.sampling_rate * 10) ÷ s.sampling_rate
 end
 
-
-_n_ts(s::IdentityShaping) = size(s.pulse_history, 2)
 _n_ts(s::FilterShaping) = size(s.shaped_pulse_history, 2)

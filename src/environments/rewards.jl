@@ -1,21 +1,27 @@
 """Abstract callable struct to generate different types of rewards from the
 quantum simulation. Custom rewards should define a [`reward_space`]() method.
 
-These callables have the argument signature:
+These callables have the argument signature (excluding an optional RNG):
 ```math
-    \\mathscr{R}(s_{t}, done_{t})
+    \\mathscr{R}(s_{t}, \\text{done}_{t})\\rightarrow r_{t}
 ```
 """
 abstract type RewardFunction <: Function end
 
 
-struct DenseGateFidelity{M <: Number} <: RewardFunction
-    target::Matrix{M}
+struct DenseGateFidelity{
+    I <: Union{Nothing, AbstractVector{Int}}
+} <: RewardFunction
+    target::Matrix{ComplexF64}
+    computational_indices::I
     _r_tm1::Base.RefValue{Float64}
 end
 
 """
-    DenseGateFidelity(target::Matrix)
+    DenseGateFidelity(
+        target::Matrix,
+        computational_indices::Union{Nothing, AbstractVector{Int}} = nothing,
+    )
 
 Callable to generate a gate fidelity reward function that is defined as:
 ```math
@@ -28,17 +34,37 @@ Where:
 
 Args:
   * `target`: Target unitary matrix.
+  * `computational_indices`: Computational subspace to calculate the fidelity.
+        If `nothing`, the full matrix is used (default: `nothing`).
 
 Fields:
   * `target`: Target unitary matrix.
+  * `computational_indices`: Computational subspace.
 """
-function DenseGateFidelity(target::Matrix)
+function DenseGateFidelity(
+    target::Matrix,
+    computational_indices::Union{Nothing, AbstractVector{Int}} = nothing,
+)
     is_unitary(target) || throw(ArgumentError("Target matrix must be unitary!"))
-    return DenseGateFidelity(target, Base.RefValue(zero(Float64)))
+    return DenseGateFidelity(
+        target, computational_indices, Base.RefValue(zero(Float64))
+    )
 end
 
-function (r::DenseGateFidelity)(u::AbstractMatrix{ComplexF64}, done::Bool)
-    nlif = -log10(1 - gate_fidelity(u, r.target) + 1e-6)
+function (r::DenseGateFidelity)(
+    u::AbstractMatrix{ComplexF64}, done::Bool, ::AbstractRNG = default_rng()
+)
+    if isnothing(r.computational_indices)
+        nlif = -log10(1 - gate_fidelity(u, r.target) + 1e-6)
+    else
+        nlif = -log10(
+            1
+            - gate_fidelity(
+                u[r.computational_indices, r.computational_indices], r.target
+            )
+            + 1e-6
+        )
+    end
     r = nlif - r._r_tm1[]
     r._r_tm1[] = nlif
     if done
@@ -50,12 +76,18 @@ end
 reward_space(::DenseGateFidelity) = ClosedInterval(0.0, 6.0)
 
 
-struct SparseGateFidelity{M <: Number} <: RewardFunction
-    target::Matrix{M}
+struct SparseGateFidelity{
+    I <: Union{Nothing, AbstractVector{Int}}
+} <: RewardFunction
+    target::Matrix{ComplexF64}
+    computational_indices::I
 end
 
 """
-    SparseGateFidelity(target::Matrix)
+    function SparseGateFidelity(
+        target::Matrix,
+        computational_indices::Union{Nothing, AbstractVector{Int}} = nothing,
+    )
 
 Constructs a fidelity reward function that is defined as:
 
@@ -72,18 +104,37 @@ Where:
 
 Args:
   * `target`: Target unitary matrix.
+  * `computational_indices`: Computational subspace to calculate the fidelity.
+        If `nothing`, the full matrix is used (default: `nothing`).
 
 Fields:
   * `target`: Target unitary matrix.
+  * `computational_indices`: Computational subspace.
 """
-function SparseGateFidelity(target::Matrix)
+function SparseGateFidelity(
+    target::Matrix,
+    computational_indices::Union{Nothing, AbstractVector{Int}} = nothing,
+)
     is_unitary(target) || throw(ArgumentError("Target matrix must be unitary!"))
-    return SparseGateFidelity{eltype(target)}(target)
+    return SparseGateFidelity{typeof(computational_indices)}(
+        target, computational_indices
+    )
 end
 
-function (r::SparseGateFidelity)(u::AbstractMatrix{ComplexF64}, done::Bool)
+function (r::SparseGateFidelity)(
+    u::AbstractMatrix{ComplexF64}, done::Bool, ::AbstractRNG = default_rng()
+)
     if done
-        return -log10(1 - gate_fidelity(u, r.target) + 1e-6)
+        if isnothing(r.computational_indices)
+            return -log10(1 - gate_fidelity(u, r.target) + 1e-6)
+        end
+        return -log10(
+            1
+            - gate_fidelity(
+                u[r.computational_indices, r.computational_indices], r.target
+            )
+            + 1e-6
+        )
     end
     return zero(Float64)
 end
@@ -92,13 +143,14 @@ reward_space(::SparseGateFidelity) = ClosedInterval(0.0, 6.0)
 
 
 struct RobustGateFidelity{
-    T <: Number,
     M <: ModelFunction,
     P <: Union{PulseFunction, Chain{<:Tuple{Vararg{PulseFunction}}}},
+    I <: Union{Nothing, AbstractVector{Int}},
 } <: RewardFunction
-    target::Matrix{T}
+    target::Matrix{ComplexF64}
     model_function::M
     pulse_function::P
+    computational_indices::I
     n_runs::Int
     _pulse_history::SubArray{
         Float64,
@@ -111,20 +163,46 @@ end
 
 """
     RobustGateFidelity(
-        target::Matrix{ComplexF64},
+        target::Matrix,
         model_function::ModelFunction,
         pulse_history::Matrix{Float64},
         pulse_function::Union{
             PulseFunction, Chain{<:Tuple{Vararg{PulseFunction}}}
-        };
+        },
+        computational_indices::Union{Nothing, AbstractVector{Int}} = nothing,
         n_runs::Int = 50,
     )
+
+Callable generating a robust gate fidelity reward where a protocol choice is
+simulated with a number of different noise realisations and the reward is the
+average fidelity over the runs. There should be noise in either the model or
+pulse protocol.
+
+Args:
+  * `target`: Target unitary matrix.
+  * `model_function`: Model function (optionally with noise).
+  * `pulse_history`: Pulse history matrix (a view is made to avoid copying). If
+        there is pulse shaping, use the shaped pulse history.
+  * `pulse_function`: Pulse function (optionally with noise).
+  * `computational_indices`: Computational subspace to calculate the fidelity.
+        If `nothing`, the full matrix is used (default: `nothing`).
+
+Kwargs:
+  * `n_runs`: Number of runs (default: `50`).
+
+Fields:
+  * `target`: Target unitary matrix.
+  * `model_function`: Model function.
+  * `pulse_function`: Pulse function.
+  * `computational_indices`: Computational subspace.
+  * `n_runs`: Number of runs.
 """
 function RobustGateFidelity(
-    target::Matrix{<:Number},
+    target::Matrix,
     model_function::ModelFunction,
     pulse_history::Matrix{Float64},
-    pulse_function::Union{PulseFunction, Chain{<:Tuple{Vararg{PulseFunction}}}};
+    pulse_function::Union{PulseFunction, Chain{<:Tuple{Vararg{PulseFunction}}}},
+    computational_indices::Union{Nothing, AbstractVector{Int}} = nothing;
     n_runs::Int = 50,
 )
     is_unitary(target) || throw(ArgumentError("Target matrix must be unitary!"))
@@ -140,6 +218,7 @@ function RobustGateFidelity(
         target,
         model_function,
         pulse_function,
+        computational_indices,
         n_runs,
         view(pulse_history, :, :),
     )
@@ -154,25 +233,26 @@ function (r::RobustGateFidelity)(
             reset!(r.model_function, rng)
             reset!(r.pulse_function, rng)
             u = Matrix{ComplexF64}(I, _m_size(r.model_function))
-            for i in axes(r._pulse_history, 2)
+            for j in axes(r._pulse_history, 2)
                 u .= (
                     u
                     * r.model_function(
-                        r.pulse_function(i, r._pulse_history[:, i])
+                        r.pulse_function(j, r._pulse_history[:, j])
                     )
                 )
             end
-            rewards[i] = -log10(
-                1
-                - gate_fidelity(
-                    u[
-                        computational_indices(r.model_function),
-                        computational_indices(r.model_function),
-                    ],
-                    r.target,
+            if isnothing(r.computational_indices)
+                rewards[i] = -log10(1 - gate_fidelity(u, r.target) + 1e-6)
+            else
+                rewards[i] = -log10(
+                    1
+                    - gate_fidelity(
+                        u[r.computational_indices, r.computational_indices],
+                        r.target,
+                    )
+                    + 1e-6
                 )
-                + 1e-6
-            )
+            end
         end
         return mean(rewards)
     end
@@ -194,7 +274,7 @@ end
 """
     NormalisedReward(base_function::RewardFunction, gamma::Float64)
 
-Reward function with output values normalised to unit normal.
+Reward function with output values normalised to unit normal of the returns.
 
 Args:
   * `base_function`: Base reward function.
@@ -223,24 +303,30 @@ function NormalisedReward(base_function::RewardFunction, gamma::Float64)
         Base.RefValue(zero(Float64)),
         Base.RefValue(zero(Float64)),
         Base.RefValue(one(Float64)),
-        Base.RefValue(1),
+        Base.RefValue(0),
     )
 end
 
-function (r::NormalisedReward)(state_m::AbstractMatrix{ComplexF64}, done::Bool)
-    reward = r.base_function(state_m, done)
+function (r::NormalisedReward)(
+    u::AbstractMatrix{ComplexF64}, done::Bool, rng::AbstractRNG = default_rng()
+)
+    reward = r.base_function(u, done, rng)
     r.return_e[] = r.return_e[] * r.gamma + reward
-    Δᵣ = r.return_e[] - r.returns_mean[]
-    r.returns_mean[] += Δᵣ / (r.count[] + 1)
+    # Update mean
+    delta_r = r.return_e[] - r.returns_mean[]
+    r.returns_mean[] += delta_r / (r.count[] + 1)
+    # Update variance
+    delta_r_new = r.return_e[] - r.returns_mean[]
     r.returns_var[] = (
-        r.returns_var[] * r.count[] / (r.count[] + 1)
-        + (Δᵣ ^ 2) * r.count[] / (r.count[] + 1) ^ 2
+        r.count[] * r.returns_var[] / (r.count[] + 1)
+        + delta_r * delta_r_new / (r.count[] + 1)
     )
+    # Update count
     r.count[] += 1
     if done
         r.return_e[] = 0
     end
-    return reward, reward / sqrt(r.returns_var[] + 1e-6)
+    return reward / sqrt(r.returns_var[] + 1e-6)
 end
 
 reward_space(r::NormalisedReward) = reward_space(r.base_function)

@@ -33,26 +33,6 @@ struct QuantumControlEnvironment{
         },
         Tuple{},
     }
-    _state_l::SubArray{
-        Complex{Float64},
-        2,
-        Base.ReshapedArray{
-            Complex{Float64},
-            2,
-            Base.ReinterpretArray{
-                Complex{Float64},
-                1,
-                Float64,
-                SubArray{
-                    Float64, 1, Vector{Float64}, Tuple{UnitRange{Int}}, true
-                },
-                false,
-            },
-            Tuple{},
-        },
-        Tuple{UnitRange{Int}, UnitRange{Int}},
-        false,
-    }
 end
 
 """
@@ -179,10 +159,6 @@ function QuantumControlEnvironment(
         isqrt((length(_state) - 1 - n_controls) ÷ 2),
         isqrt((length(_state) - 1 - n_controls) ÷ 2),
     )
-    _state_l = @view _state_m[
-        computational_indices(model_function),
-        computational_indices(model_function),
-    ]
     _state_space = vcat(
         ClosedInterval(0.0, convert(Float64, n_inputs)),
         ClosedInterval.(input_function.control_min, input_function.control_max),
@@ -207,7 +183,6 @@ function QuantumControlEnvironment(
         _state_t,
         _state_p,
         _state_m,
-        _state_l,
     )
 end
 
@@ -234,11 +209,15 @@ function reset!(
     env._state_t .= env.n_inputs
     env._state_p .= zero(env._state_p)
     env._state_m .= Matrix(I, size(env._state_m))
-    return env.observation_function(env._state)
+    return env.observation_function(env._state, rng)
 end
 
 """
-    step!(env::QuantumControlEnvironment, action::Vector{Float64})
+    step!(
+        env::QuantumControlEnvironment,
+        action::Vector{Float64},
+        rng::AbstractRNG = default_rng(),
+    )
 
 Input a valid action to take a step in the environment modifying it's state and
 getting an observation, reward, and a termination if ended.
@@ -246,15 +225,19 @@ getting an observation, reward, and a termination if ended.
 Args:
   * `env`: Quantum control environment.
   * `action`: Chosen action that the agent takes.
+  * `rng`: Random number generator (default: [`Random.default_rng()`]()).
 
 Returns:
-  * `Tuple`: A tuple containing:
-    - `observation` (`Vector{Float64}`): An observation of the quantum control
-        environment.
-    - `done` (`Bool`): Indicates if the environment has terminated.
-    - `reward` (`Float64`): The reward recieved.
+  * `Tuple{Vector{Float64}, Bool, Float64}`: A tuple containing:
+    - An observation of the quantum control environment.
+    - A termination condition indicating if the environment has terminated.
+    - The reward recieved.
 """
-function step!(env::QuantumControlEnvironment, action::Vector{Float64})
+function step!(
+    env::QuantumControlEnvironment,
+    action::Vector{Float64},
+    rng::AbstractRNG = default_rng(),
+)
     if !is_valid_input(env.action_space, action)
         throw(DomainError(action, "Action is not valid."))
     end
@@ -263,7 +246,9 @@ function step!(env::QuantumControlEnvironment, action::Vector{Float64})
     env._state_t .-= 1
     env._state_p .= env.input_function(env._state_p, action)
 
-    t_bar, epsilon_t_bar = env.shaping_function(env._t_step[], env._state_p, env.model_function.delta_t)
+    t_bar, epsilon_t_bar = env.shaping_function(
+        env._t_step[], env._state_p, env.model_function.delta_t
+    )
     for i in axes(epsilon_t_bar, 2)
         u = env.model_function(
             env.pulse_function(t_bar[i], epsilon_t_bar[:, i])
@@ -271,7 +256,7 @@ function step!(env::QuantumControlEnvironment, action::Vector{Float64})
         env._state_m .= u * env._state_m
     end
     done = env._state[1] <= 0
-    reward = env.reward_function(env._state_l, done)
-    observation = env.observation_function(env._state)
+    reward = env.reward_function(env._state_m, done, rng)
+    observation = env.observation_function(env._state, rng)
     return observation, done, reward
 end

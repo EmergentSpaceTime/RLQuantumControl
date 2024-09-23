@@ -1,6 +1,7 @@
 """Abstract callable struct that creates a output pulse from a given action from
 the controller. Custom inputs must define `control_min` and `control_max` fields
-and a [`action_space`]() method.
+which is a vector with length matching the number of controls and a
+[`action_space`]() method.
 
 These callables have the argument signature:
 ```math
@@ -8,6 +9,8 @@ These callables have the argument signature:
 ```
 """
 abstract type InputFunction <: Function end
+
+_n_ctrls(i::InputFunction) = length(i.control_min)
 
 
 struct IdentityInput <: InputFunction
@@ -149,6 +152,3 @@ function is_valid_input(
     end
     return true
 end
-
-
-_n_ctrls(i::InputFunction) = length(i.control_min)

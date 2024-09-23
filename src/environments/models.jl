@@ -1,35 +1,65 @@
 #################
 # Natural Units #
 #################
+# 1 / ns = 6.582119569e-7 eV
 # 1mT = 0.087953 GHz
 # 1 eV = (1 / 6.582119e-7) GHz
 
 """Abstract callable struct that creates an evolution operator (e.g. unitary
-from Hamiltonian) from an inputted pulse (at the that time step). Custom models
-should define a [`computational_indices`]() method that specifies the
-logical qubit subspace. Models may have an optional [`reset!`]() method that
-sets an initial state for the model (i.e. the cases where the model contains
-random noise or parameters which can differ episode to episode), and a
-[`has_noise`]() method outputting a `Bool` if the dynamics contains noise.
+from Hamiltonian) from an inputted pulse (at the that time step). Models may
+have an optional [`reset!`]() method that sets an initial state for the model
+(i.e. the cases where the model contains random noise or parameters which can
+differ episode to episode), and a [`has_noise`]() method outputting a `Bool` if
+the dynamics contains noise.
 
 These callables have the argument signature:
 ```math
-    \\mathscr{M}(\\epsilon_{t})
+    \\mathscr{M}(\\epsilon_{t})\\rightarrow\\xi_{t}
 ```
 """
 abstract type ModelFunction end
 
+reset!(::ModelFunction, ::AbstractRNG = default_rng()) = nothing
 has_noise(::ModelFunction) = false
-reset!(::ModelFunction) = nothing
+
+function _n_ctrls(m::ModelFunction)
+    if hasfield(m, :h_controls)
+        if m.h_controls isa Matrix
+            return 1
+        elseif m.h_drift isa Vector
+            return length(m.h_controls)
+        end
+    end
+    throw(
+        ErrorException(
+            "Model doesn't have defined control fields, `h_controls`."
+        )
+    )
+end
+
+function _m_size(m::ModelFunction)
+    if hasfield(m, :h_drifts)
+        if m.h_drifts isa Matrix
+            return size(m.h_drifts)
+        elseif m.h_drifts isa Vector
+            return size(m.h_drifts[1])
+        end
+    end
+    throw(
+        ErrorException(
+            "Model doesn't have defined drift Hamiltonian fields, `h_drifts`."
+        )
+    )
+end
 
 
 struct QuantumDot2 <: ModelFunction
     delta_t::Float64
-    H_drifts::Vector{Matrix{Float64}}
-    H_controls::Vector{Matrix{Float64}}
-    H_coupling::Matrix{Float64}
+    h_drifts::Vector{Matrix{Float64}}
+    h_controls::Vector{Matrix{Float64}}
+    h_coupling::Matrix{Float64}
     _sigma_bb::Vector{Float64}
-    _H_drift_episode::Matrix{Float64}
+    _h_drift_episode::Matrix{Float64}
 end
 
 """
@@ -37,9 +67,9 @@ end
         ;
         delta_t::Real = 1.0,
         b_ij::Vector{<:Real} = [1.0, 7.0, -1.0],
-        J_0::Real = 1.0,
+        j_0::Real = 1.0,
         epsilon_0::Real = 0.272,
-        E_coupling::Real = 0.0,
+        e_coupling::Real = 0.0,
         sigma_b::Real = 0.0263859,
     )
 
@@ -55,37 +85,27 @@ to one logical qubit. Units are in GHz unless specified otherwise.
 Where:
 ```math
     \\begin{aligned}
-        H(\\epsilon_{t}) &=
-            \\frac{b_{12}}{8}(%
-                -3\\sigma^{z(1)}
-                + \\sigma^{z(2)}
-                + \\sigma^{z(3)}
-                + \\sigma^{z(4)}
-            )\\\\
-            &+ \\frac{b_{23}}{4}(%
-                -\\sigma^{z(1)}
-                - \\sigma^{z(2)}
-                + \\sigma^{z(3)}
-                + \\sigma^{z(4)}
-            )\\\\
-            &+ \\frac{b_{34}}{8}(%
-                -\\sigma^{z(1)}
-                - \\sigma^{z(2)}
-                - \\sigma^{z(3)}
-                + 3\\sigma^{z(4)}
-            )\\\\
-            &+ {%
-                \\sum^{3}_{i}
-                \\frac{%
-                    J_{0}
-                    \\exp{%
-                        \\left(%
-                            \\frac{\\epsilon_{i, i + 1, t}}{\\epsilon_{0}}
-                        \\right)
-                    }
-                }{4}
-                \\bar{\\sigma}^{(i)}\\cdot\\bar{\\sigma}^{(i + 1)}
-            }
+        H(\\epsilon_{t}) &= \\frac{b_{12}}{8}(%
+            -3\\sigma^{z(1)} + \\sigma^{z(2)} + \\sigma^{z(3)} + \\sigma^{z(4)}
+        )\\\\
+        &+ \\frac{b_{23}}{4}(%
+            -\\sigma^{z(1)} - \\sigma^{z(2)} + \\sigma^{z(3)} + \\sigma^{z(4)}
+        )\\\\
+        &+ \\frac{b_{34}}{8}(%
+            -\\sigma^{z(1)} - \\sigma^{z(2)} - \\sigma^{z(3)} + 3\\sigma^{z(4)}
+        )\\\\
+        &+ {%
+            \\sum^{3}_{i}
+            \\frac{%
+                J_{0}
+                \\exp{%
+                    \\left(
+                        \\frac{\\epsilon_{i, i + 1, t}}{\\epsilon_{0}}
+                    \\right)
+                }
+            }{4}
+            \\bar{\\sigma}^{(i)}\\cdot\\bar{\\sigma}^{(i + 1)}
+        }
     \\end{aligned}
 ```
 In addition one can add a quasi-static (slow) noise that peturbs the magnetic
@@ -96,25 +116,25 @@ Kwargs:
         use the sub-time step (default: `1.0`).
   * `b_ij`: Magnetic field gradients between i-j qubits (default:
         `[1.0, 7.0, -1.0]`).
-  * `J_0`: Unit parameter for tilt-control (default: `1.0`).
+  * `j_0`: Unit parameter for tilt-control (default: `1.0`).
   * `epsilon_0`: Unit field in meV (default: `0.272`).
-  * `E_coupling`: Coupling parameter for leakage in ``\\mu``eV (default:
+  * `e_coupling`: Coupling parameter for leakage in ``\\mu``eV (default:
         `0.0`).
   * `sigma_b`: Standard deviation of the slow noise on the magnetic field
         gradients (default: `0.0263859`).
 
 Fields:
-  * `H_drift`: Drift components of Hamiltonian.
-  * `H_controls`: Control components of Hamiltonian.
-  * `H_coupling`: Coupling component of Hamiltonian.
+  * `h_drift`: Drift components of Hamiltonian.
+  * `h_controls`: Control components of Hamiltonian.
+  * `h_coupling`: Coupling component of Hamiltonian.
 """
 function QuantumDot2(
     ;
     delta_t::Real = 1.0,
     b_ij::Vector{<:Real} = [1.0, 7.0, -1.0],
-    J_0::Real = 1.0,
+    j_0::Real = 1.0,
     epsilon_0::Real = 0.272,
-    E_coupling::Real = 0.0,
+    e_coupling::Real = 0.0,
     sigma_b::Real = 0.0263859,
 )
     if delta_t <= zero(delta_t)
@@ -124,12 +144,12 @@ function QuantumDot2(
         throw(ArgumentError("`sigma_b` must be positive."))
     end
     iszero(epsilon_0) && throw(ArgumentError("`epsilon_0` must be non-zero."))
-    J_0 < zero(J_0) && throw(ArgumentError("`J_0` must be positive."))
+    j_0 < zero(j_0) && throw(ArgumentError("`j_0` must be positive."))
     return QuantumDot2(
         delta_t,
-        b_ij .* _get_H_drift_terms_qdot_2(),
-        J_0 .* _get_H_control_terms_qdot_2(),
-        _get_H_coupling_term_qdot_2(J_0, epsilon_0, E_coupling),
+        b_ij .* _get_h_drift_terms_qdot_2(),
+        j_0 .* _get_H_control_terms_qdot_2(),
+        _get_h_coupling_term_qdot_2(j_0, epsilon_0, e_coupling),
         iszero(sigma_b) ? [] : fill(sigma_b, 3) ./ b_ij,
         zeros(6, 6),
     )
@@ -139,45 +159,45 @@ function (m::QuantumDot2)(epsilon_t::Vector{Float64})
     return cis(
         -Hermitian(
             @. m.delta_t * (
-                m._H_drift_episode
-                + epsilon_t[1] * m.H_controls[1]
-                + epsilon_t[2] * m.H_controls[2]
-                + epsilon_t[3] * m.H_controls[3]
-                + epsilon_t[1] * epsilon_t[3] * m.H_coupling
+                m._h_drift_episode
+                + epsilon_t[1] * m.h_controls[1]
+                + epsilon_t[2] * m.h_controls[2]
+                + epsilon_t[3] * m.h_controls[3]
+                + epsilon_t[1] * epsilon_t[3] * m.h_coupling
             )
         )
     )
 end
 
-has_noise(m::QuantumDot2) = !isempty(m._sigma_bb)
-computational_indices(::QuantumDot2) = 2:5
-
 function reset!(m::QuantumDot2, rng::AbstractRNG = default_rng())
     if isempty(m._sigma_bb)
-        m._H_drift_episode .= sum(m.H_drifts)
+        m._h_drift_episode .= sum(m.h_drifts)
     else
-        @. m._H_drift_episode = $sum(
-            m.H_drifts * (1 + $rand(rng, 3) * m._sigma_bb)
+        @. m._h_drift_episode = $sum(
+            m.h_drifts * (1 + $randn(rng, 3) * m._sigma_bb)
         )
     end
     return nothing
 end
 
+has_noise(m::QuantumDot2) = !isempty(m._sigma_bb)
+_m_size(::QuantumDot2) = 6, 6
 
-function _get_H_drift_terms_qdot_2()
+
+function _get_h_drift_terms_qdot_2()
     sigma_z = [1 0; 0 -1]
     sigma_z_1 = kron(sigma_z, I(2), I(2), I(2))
     sigma_z_2 = kron(I(2), sigma_z, I(2), I(2))
     sigma_z_3 = kron(I(2), I(2), sigma_z, I(2))
     sigma_z_4 = kron(I(2), I(2), I(2), sigma_z)
 
-    H_12 = @. (-3 * sigma_z_1 + sigma_z_2 + sigma_z_3 + sigma_z_4) / 8
-    H_23 = @. (-sigma_z_1 - sigma_z_2 + sigma_z_3 + sigma_z_4) / 4
-    H_34 = @. (-sigma_z_1 - sigma_z_2 - sigma_z_3 + 3 * sigma_z_4) / 8
+    h_12 = @. (-3 * sigma_z_1 + sigma_z_2 + sigma_z_3 + sigma_z_4) / 8
+    h_23 = @. (-sigma_z_1 - sigma_z_2 + sigma_z_3 + sigma_z_4) / 4
+    h_34 = @. (-sigma_z_1 - sigma_z_2 - sigma_z_3 + 3 * sigma_z_4) / 8
 
     indices = [4, 6, 7, 10, 11, 13]
     return [
-        H_12[indices, indices], H_23[indices, indices], H_34[indices, indices]
+        h_12[indices, indices], h_23[indices, indices], h_34[indices, indices]
     ]
 end
 
@@ -210,16 +230,10 @@ function _get_H_control_terms_qdot_2()
 end
 
 
-function _get_H_coupling_term_qdot_2(
-    J_0::Real, epsilon_0::Real, E_coupling::Real
+function _get_h_coupling_term_qdot_2(
+    j_0::Real, epsilon_0::Real, e_coupling::Real
 )
     return diagm([0, 0, 0, 0, 1, 0]) .* (
-        6.582119e-7 * E_coupling * (J_0 / epsilon_0) ^ 2
+        6.582119e-7 * e_coupling * (j_0 / epsilon_0) ^ 2
     )
 end
-
-
-_n_ctrls(m::ModelFunction) = length(m.H_controls)
-
-
-_m_size(m::QuantumDot2) = size(m.H_drifts[1])
