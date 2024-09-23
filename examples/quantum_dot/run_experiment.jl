@@ -26,7 +26,8 @@ LABEL = ["", "", "", ""]
 # Setup seed and custom labels
 seed!(SEED)
 LABEL[1] = "_seed=" * string(SEED)
-LABEL[2] = "_shaping=" * CONFIG["shaping"]
+# LABEL[2] = "_shaping=" * CONFIG["shaping"]
+LABEL[2] = "_inputs=" * string(CONFIG["inputs"])
 LABEL[3] = "_plength=" * string(CONFIG["protocol_length"])
 LABEL[4] = "_srate=" * string(CONFIG["sampling_rate"])
 
@@ -55,7 +56,7 @@ elseif CONFIG["shaping"] == "gauss"
     sigma = 0.5
     shaping_function = FilterShaping(
         3,
-        CONFIG["n_inputs"],
+        CONFIG["inputs"],
         Spline1D(
             -5:0.1:5,
             @. (
@@ -80,7 +81,7 @@ model_function = QuantumDot2(
         )
     ),
     sigma_b=(
-        CONFIG["reward"] == "robust" ? 0.0 : CONFIG["noises_drift"] * 0.0116098
+        CONFIG["reward"] == "robust" ? 0.0 : CONFIG["noises_drift"] * 0.0105557513160623
     ),
 )
 
@@ -127,7 +128,7 @@ elseif CONFIG["reward"] == "robust"
             QuantumDot2(
                 ;
                 delta_t=model_function.delta_t,
-                sigma_b=CONFIG["noises_drift"] * 0.0116098
+                sigma_b=CONFIG["noises_drift"] * 0.010555751316062399
             ),
             shaping_function.shaped_pulse_history,
             Chain(
@@ -168,7 +169,7 @@ agent = SACAgent(
     activation=relu,
     init=glorot_uniform,
     capacity=100000,
-    hiddens=[512, 512],
+    hiddens=[512, 512, 512],
     log_var_min=-15,
     log_var_max=4,
     use_tqc=true,
@@ -190,7 +191,7 @@ agent = SACAgent(
 r, l = learn!(agent, env)
 
 prefix = (
-    "data/plength_shaping_srate_noises/"
+    "data/plength_srate_inputs_3/"
     * "episodes="
     * EPISODES
     * LABEL[1]

@@ -9,12 +9,10 @@ module RLQuantumControl
         relu, setup, unsqueeze, update!, withgradient, @layer,
         _greek_ascii_depwarn, _size_check
     using IntervalSets: ClosedInterval, leftendpoint, rightendpoint
-    using LinearAlgebra: Hermitian, I, diag, diagm, dot, qr, svd
+    using LinearAlgebra: Hermitian, I, diag, diagm, dot, eigvals, qr, svd
     using NNlib: make_causal_mask
     using Random: AbstractRNG, default_rng
     using StatsBase: mean, sample
-
-    import Flux: hasaffine
 
 
     # Environment files
@@ -56,6 +54,7 @@ module RLQuantumControl
     export reset!
 
     # Agent exports
+    export CustomLayerNorm
     export Memory, ReplayBuffer
     export Agent, SACAgent, SACNetworks, SACParameters, evaluation_steps!,
         get_action, get_random_action, learn!, trainer_steps!
