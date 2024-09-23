@@ -7,12 +7,12 @@
 
 Parameter struct for SAC algorithm.
 
-Fields:
+Fields (& Kwargs):
   * `action_scale`: The scale to match the action space of the continuous
         environment (on device memory).
   * `action_bias`: The bias to match the action space of the continous
         environment (on device memory).
-  * `H_bar`: Target entropy, usually equals to -dim(`action_space`).
+  * `H_bar`: Target entropy (default: -dim(`action_space`)).
   * `capacity`: Number of transitions stored in memory (default: `100000`).
   * `hiddens`: Dimensions of hidden layers (default: `[256, 256]`).
   * `log_var_min`: Minium log standard deviation for stable training (default:
@@ -88,24 +88,15 @@ end
 @layer SACNetworks
 
 function trainable(n::SACNetworks)
-    if isnothing(n.base_layer)
-        return (
-            n.policy_layers,
-            n.Q_1_layers,
-            n.Q_1_target_layers,
-            n.Q_2_layers,
-            n.Q_2_target_layers,
-            n.log_alpha,
-        )
-    end
     return (
-        n.base_layer,
-        n.policy_layers,
-        n.Q_1_layers,
-        n.Q_1_target_layers,
-        n.Q_2_layers,
-        n.Q_2_target_layers,
-        n.log_alpha,
+        ;
+        base_layer=n.base_layer,
+        policy_layers=n.policy_layers,
+        Q_1_layers=n.Q_1_layers,
+        Q_1_target_layers=n.Q_1_target_layers,
+        Q_2_layers=n.Q_2_layers,
+        Q_2_target_layers=n.Q_2_target_layers,
+        log_alpha=n.log_alpha,
     )
 end
 
@@ -163,10 +154,10 @@ function SACNetworks(
         Q_2_layers,
         deepcopy(Q_2_layers),
         log_alpha,
-        action_scale,
-        action_bias,
         log_var_min,
         log_var_max,
+        action_scale,
+        action_bias,
     )
 end
 

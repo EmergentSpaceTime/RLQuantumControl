@@ -11,6 +11,8 @@ abstract type PulseFunction <: Function end
 
 reset!(::PulseFunction, ::AbstractRNG = default_rng()) = nothing
 has_noise(::PulseFunction) = false
+_n_ctrls(::PulseFunction) = nothing
+_n_ts(::PulseFunction) = nothing
 
 
 """
@@ -70,16 +72,17 @@ function StaticNoiseInjection(n_controls::Int, sigma::Real)
     return StaticNoiseInjection(sigma, zeros(n_controls))
 end
 
+function (n::StaticNoiseInjection)(::Int, epsilon_t::Vector{Float64})
+    return epsilon_t .+ n._noise_episode
+end
+
 function reset!(n::StaticNoiseInjection, rng::AbstractRNG = default_rng())
     n._noise_episode .= randn(rng, length(n._noise_episode)) .* n.sigma
     return nothing
 end
 
 has_noise(::StaticNoiseInjection) = true
-
-function (n::StaticNoiseInjection)(::Int, epsilon_t::Vector{Float64})
-    return epsilon_t .+ n._noise_episode
-end
+_n_ctrls(n::StaticNoiseInjection) = length(n._noise_episode)
 
 
 struct WhiteNoiseInjection <: PulseFunction
@@ -116,26 +119,28 @@ function WhiteNoiseInjection(n_ts::Int, n_controls::Int, sigma::Real)
     return WhiteNoiseInjection(sigma, Base.RefValue(0), zeros(n_controls, n_ts))
 end
 
+function (n::WhiteNoiseInjection)(t_step::Int, epsilon_t::Vector{Float64})
+    return epsilon_t .+ n._noises_episode[:, t_step]
+end
+
 function reset!(n::WhiteNoiseInjection, rng::AbstractRNG = default_rng())
     n._noises_episode .= randn(rng, size(n._noises_episode)...) .* n.sigma
     return nothing
 end
 
 has_noise(::WhiteNoiseInjection) = true
-
-function (n::WhiteNoiseInjection)(t_step::Int, epsilon_t::Vector{Float64})
-    return epsilon_t .+ n._noises_episode[:, t_step]
-end
+_n_ctrls(n::WhiteNoiseInjection) = size(n._noises_episode, 1)
+_n_ts(n::WhiteNoiseInjection) = size(n._noises_episode, 2)
 
 
 struct ColouredNoiseInjection <: PulseFunction
-    S_0::Float64
+    s_0::Float64
     alpha::Float64
     _noises_episode::Matrix{Float64}
 end
 
 """
-    ColouredNoiseInjection(n_controls::Int, n_ts::Int, S_0::Real, alpha::Real)
+    ColouredNoiseInjection(n_controls::Int, n_ts::Int, s_0::Real, alpha::Real)
 
 Callable that generates time-correlated noise on each time step of the incoming
 pulse:
@@ -154,15 +159,15 @@ Args:
   * `n_controls`: Number of controls.
   * `n_ts`: Number of total time steps (including extra time steps if shaping
         includes oversampling).
-  * `S_0`: Noise power constant.
+  * `s_0`: Noise power constant.
   * `alpha`: Noise power exponent.
 
 Fields:
-  * `S_0`: Noise power constant.
+  * `s_0`: Noise power constant.
   * `alpha`: Noise power exponent.
 """
 function ColouredNoiseInjection(
-    n_controls::Int, n_ts::Int, S_0::Real, alpha::Real
+    n_controls::Int, n_ts::Int, s_0::Real, alpha::Real
 )
     n_controls < 1 && throw(ArgumentError("`n_controls` must be >= 1."))
     n_ts < 1 && throw(ArgumentError("`n_ts` must be >= 1."))
@@ -174,7 +179,11 @@ function ColouredNoiseInjection(
             )
         )
     end
-    return ColouredNoiseInjection(S_0, alpha, zeros(n_controls, n_ts))
+    return ColouredNoiseInjection(s_0, alpha, zeros(n_controls, n_ts))
+end
+
+function (n::ColouredNoiseInjection)(t_step::Int, epsilon_t::Vector{Float64})
+    return epsilon_t .+ n._noises_episode[:, t_step]
 end
 
 function reset!(n::ColouredNoiseInjection, rng::AbstractRNG = default_rng())
@@ -182,18 +191,25 @@ function reset!(n::ColouredNoiseInjection, rng::AbstractRNG = default_rng())
         size(n._noises_episode, 2),
         size(n._noises_episode, 1),
         n.alpha,
-        n.S_0,
+        n.s_0,
         rng,
     )
     return nothing
 end
 
 has_noise(::ColouredNoiseInjection) = true
+_n_ctrls(n::ColouredNoiseInjection) = size(n._noises_episode, 1)
+_n_ts(n::ColouredNoiseInjection) = size(n._noises_episode, 2)
 
-function (n::ColouredNoiseInjection)(t_step::Int, epsilon_t::Vector{Float64})
-    return epsilon_t .+ n._noises_episode[:, t_step]
+
+function (c_p::Chain{<:Tuple{Vararg{PulseFunction}}})(
+    t_step::Int, epsilon_t::Vector{Float64}
+)
+    for p in c_p
+        epsilon_t = p(t_step, epsilon_t)
+    end
+    return epsilon_t
 end
-
 
 function reset!(
     c_p::Chain{<:Tuple{Vararg{PulseFunction}}}, rng::AbstractRNG = default_rng()
@@ -210,21 +226,6 @@ function has_noise(c_p::Chain{<:Tuple{Vararg{PulseFunction}}})
     end
     return false
 end
-
-function (c_p::Chain{<:Tuple{Vararg{PulseFunction}}})(
-    t_step::Int, epsilon_t::Vector{Float64}
-)
-    for p in c_p
-        epsilon_t = p(t_step, epsilon_t)
-    end
-    return epsilon_t
-end
-
-
-_n_ctrls(::PulseFunction) = nothing
-_n_ctrls(n::StaticNoiseInjection) = length(n._noise_episode)
-_n_ctrls(n::WhiteNoiseInjection) = size(n._noises_episode, 1)
-_n_ctrls(n::ColouredNoiseInjection) = size(n._noises_episode, 1)
 
 function _n_ctrls(c_p::Chain{<:Tuple{Vararg{PulseFunction}}})
     sum_length = 0
@@ -253,11 +254,6 @@ function _n_ctrls(c_p::Chain{<:Tuple{Vararg{PulseFunction}}})
     end
     return equal_length
 end
-
-
-_n_ts(::PulseFunction) = nothing
-_n_ts(n::WhiteNoiseInjection) = size(n._noises_episode, 2)
-_n_ts(n::ColouredNoiseInjection) = size(n._noises_episode, 2)
 
 function _n_ts(c_p::Chain{<:Tuple{Vararg{PulseFunction}}})
     sum_length = 0
