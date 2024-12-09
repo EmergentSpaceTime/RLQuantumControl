@@ -23,10 +23,10 @@ reset!(::ModelFunction, ::AbstractRNG = default_rng()) = nothing
 has_noise(::ModelFunction) = false
 
 function _n_ctrls(m::ModelFunction)
-    if hasfield(m, :h_controls)
+    if hasfield(typeof(m), :h_controls)
         if m.h_controls isa Matrix
             return 1
-        elseif m.h_drift isa Vector
+        elseif m.h_controls isa Vector
             return length(m.h_controls)
         end
     end
@@ -38,7 +38,7 @@ function _n_ctrls(m::ModelFunction)
 end
 
 function _m_size(m::ModelFunction)
-    if hasfield(m, :h_drifts)
+    if hasfield(typeof(m), :h_drifts)
         if m.h_drifts isa Matrix
             return size(m.h_drifts)
         elseif m.h_drifts isa Vector

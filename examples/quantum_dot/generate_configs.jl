@@ -1,28 +1,30 @@
 using TOML
 
 
-function generate_configs()
+function generate_configs(path::String)
     parameters_variations = Dict{String, Vector}(
-        "seed" => [1338, 24428, 1453, 5771],
-        "inputs" => [45],
+        "seed" => [1338, 24428, 322, 441],
+        "inputs" => [15],
         "scale" => [0.91],
         "sigma" => [0.1],
-        "shaping" => ["fir"],
-        "pulse" => ["both"],
-        "noises_epsilon_s" => [0.1, 0.0],
-        "noises_epsilon_f" => [0.1, 0.0],
-        "noises_drift" => [0.1, 0.0],
-        "reward" => ["sparse", "robust"],
+        "shaping" => ["fir"],  # Kernel for shaping.
+        "pulse" => ["none"],
+        "nepss" => [1.0],  # "Fast" pulse noise.
+        "nepsf" => [1.0],  # "Slow" pulse noise.
+        "ndrift" => [1.0],  # Drift noise.
+        "reward" => ["robust"],
         "observation" => ["full"],
-        "protocol_length" => [50],
-        "sampling_rate" => [10],
+        "nmeas" => [Int(1e10), Int(1e4)],  # Number of measurements.
+        "plength" => [30],  # Protocol length.
+        "srate" => [10],  # Sampling rate.
     )
 
     experiment_number = 0
     for param_values in Iterators.product(values(parameters_variations)...)
         params = Dict(zip(keys(parameters_variations), param_values))
         open(
-            "configs/config_"
+            path * 
+            "/config_"
             * string(experiment_number)
             * ".toml",
             "w",
@@ -31,4 +33,9 @@ function generate_configs()
         end
         experiment_number += 1
     end
+    println("Generated $experiment_number configurations.")
+    return nothing
 end
+
+
+generate_configs(ARGS[1])

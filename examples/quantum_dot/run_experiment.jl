@@ -21,23 +21,24 @@ using .RLQuantumControl
 CONFIG = parsefile(ARGS[1])
 EPISODES = ARGS[2]
 SEED = CONFIG["seed"]
-LABEL = ["", "", "", ""]
+LABEL = ["", "", "", "", ""]
 
 # Setup seed and custom labels
 seed!(SEED)
 LABEL[1] = "_seed=" * string(SEED)
-# LABEL[2] = "_shaping=" * CONFIG["shaping"]
 LABEL[2] = "_inputs=" * string(CONFIG["inputs"])
-LABEL[3] = "_plength=" * string(CONFIG["protocol_length"])
-LABEL[4] = "_srate=" * string(CONFIG["sampling_rate"])
+LABEL[3] = "_plength=" * string(CONFIG["plength"])
+LABEL[4] = "_observation=" * CONFIG["observation"]
+# LABEL[5] = "_reward=" * CONFIG["reward"]
 
 #####################
 # Setup environment #
 #####################
+# Input function.
 input_function = IdentityInput(
     3; control_min=fill(-5.4, 3), control_max=fill(2.4, 3)
 )
-
+# Shaping function.
 if CONFIG["shaping"] == "none"
     shaping_function = IdentityShaping(3, CONFIG["inputs"])
 elseif CONFIG["shaping"] == "fir"
@@ -48,10 +49,10 @@ elseif CONFIG["shaping"] == "fir"
         CONFIG["inputs"],
         Spline1D(response_data[:, 1], response_data[:, 2]; bc="zero");
         boundary_values=hcat(fill(-5.4, 3), fill(-5.4, 3)),
-        sampling_rate=CONFIG["sampling_rate"],
+        sampling_rate=CONFIG["srate"],
     )
 elseif CONFIG["shaping"] == "gauss"
-    mu = 1.9
+    mu = CONFIG["mu"]
     scale = 0.91
     sigma = 0.5
     shaping_function = FilterShaping(
@@ -66,14 +67,14 @@ elseif CONFIG["shaping"] == "gauss"
             bc="zero",
         );
         boundary_values=hcat(fill(-5.4, 3), fill(-5.4, 3)),
-        sampling_rate=CONFIG["sampling_rate"],
+        sampling_rate=CONFIG["srate"],
     )
 end
-
+# Model function.
 model_function = QuantumDot2(
     ;
     delta_t=(
-        CONFIG["protocol_length"]
+        CONFIG["plength"]
         / (
             hasfield(typeof(shaping_function), :shaped_pulse_history)
             ? size(shaping_function.shaped_pulse_history, 2)
@@ -81,25 +82,25 @@ model_function = QuantumDot2(
         )
     ),
     sigma_b=(
-        CONFIG["reward"] == "robust" ? 0.0 : CONFIG["noises_drift"] * 0.0105557513160623
+        CONFIG["reward"] == "robust" ? 0.0 : CONFIG["ndrift"] * 0.0105557513
     ),
 )
-
+# Pulse function.
 if CONFIG["pulse"] == "none"
     pulse_function = ExponentialPulse()
 elseif CONFIG["pulse"] == "both"
     if CONFIG["reward"] != "robust"
         pulse_function = Chain(
-            StaticNoiseInjection(3, CONFIG["noises_epsilon_s"] * 0.0294),
+            StaticNoiseInjection(3, CONFIG["nepss"] * 0.0294),
             ColouredNoiseInjection(
                 3,
                 (
                     CONFIG["shaping"] == "none" ?
                     CONFIG["inputs"] :
-                    (CONFIG["inputs"] + 5) * CONFIG["sampling_rate"]
+                    (CONFIG["inputs"] + 5) * CONFIG["srate"]
                 ),
                 (
-                    CONFIG["noises_epsilon_f"]
+                    CONFIG["nepsf"]
                     * 8e-16
                     * (1 / 0.272e-3 ^ 2)
                     * (1 / (model_function.delta_t * 1e-9)) ^ (1 - 0.7)
@@ -112,46 +113,51 @@ elseif CONFIG["pulse"] == "both"
         pulse_function = ExponentialPulse()
     end
 end
-
+# Observation function.
 if CONFIG["observation"] == "full"
     observation_function = FullObservation()
+elseif CONFIG["observation"] == "noisy"
+    observation_function = UnitaryTomography(3, "unitary", 6, true; n=100000)
 end
-
+# Reward function.
 if CONFIG["reward"] == "sparse"
-    reward_function = NormalisedReward(
-        SparseGateFidelity([1 0 0 0; 0 1 0 0; 0 0 0 1; 0 0 1 0]), 0.99
+    reward_function = SparseGateFidelity(
+        [1 0 0 0; 0 1 0 0; 0 0 0 1; 0 0 1 0], 2:5
     )
 elseif CONFIG["reward"] == "robust"
-    reward_function = NormalisedReward(
-        RobustGateFidelity(
-            [1 0 0 0; 0 1 0 0; 0 0 0 1; 0 0 1 0],
-            QuantumDot2(
-                ;
-                delta_t=model_function.delta_t,
-                sigma_b=CONFIG["noises_drift"] * 0.010555751316062399
-            ),
-            shaping_function.shaped_pulse_history,
-            Chain(
-                StaticNoiseInjection(3, CONFIG["noises_epsilon_s"] * 0.0294),
-                ColouredNoiseInjection(
-                    3,
-                    (
-                        CONFIG["shaping"] == "none" ?
-                        CONFIG["inputs"] :
-                        (CONFIG["inputs"] + 5) * CONFIG["sampling_rate"]
-                    ),
-                    (
-                        CONFIG["noises_epsilon_f"]
-                        * 8e-16
-                        * (1 / 0.272e-3 ^ 2)
-                        * (1 / (model_function.delta_t * 1e-9)) ^ (1 - 0.7)
-                    ),
-                    0.7,
-                ),
-                ExponentialPulse(),
-            ),
+    reward_function = RobustGateFidelity(
+        [1 0 0 0; 0 1 0 0; 0 0 0 1; 0 0 1 0],
+        QuantumDot2(
+            ;
+            delta_t=model_function.delta_t,
+            sigma_b=CONFIG["ndrift"] * 0.0105557513,
         ),
-        0.99,
+        shaping_function.shaped_pulse_history,
+        Chain(
+            StaticNoiseInjection(3, CONFIG["nepss"] * 0.0294),
+            ColouredNoiseInjection(
+                3,
+                (
+                    CONFIG["shaping"] == "none" ?
+                    CONFIG["inputs"] :
+                    (CONFIG["inputs"] + 5) * CONFIG["srate"]
+                ),
+                (
+                    CONFIG["nepsf"]
+                    * 8e-16
+                    * (1 / 0.272e-3 ^ 2)
+                    * (1 / (model_function.delta_t * 1e-9)) ^ (1 - 0.7)
+                ),
+                0.7,
+            ),
+            ExponentialPulse(),
+        ),
+        (
+            CONFIG["nmeas"] == Int(1e10) ?
+            nothing :
+            UnitaryTomography(3, "unitary", 6, true; n=CONFIG["nmeas"])
+        ),
+        2:5,
     )
 end
 
@@ -169,7 +175,7 @@ agent = SACAgent(
     activation=relu,
     init=glorot_uniform,
     capacity=100000,
-    hiddens=[512, 512, 512],
+    hiddens=[512, 512],
     log_var_min=-15,
     log_var_max=4,
     use_tqc=true,
@@ -191,8 +197,9 @@ agent = SACAgent(
 r, l = learn!(agent, env)
 
 prefix = (
-    "data/plength_srate_inputs_3/"
-    * "episodes="
+    "data/"
+    * ARGS[3]
+    * "/episodes="
     * EPISODES
     * LABEL[1]
     * LABEL[2]

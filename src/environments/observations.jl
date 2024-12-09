@@ -383,8 +383,10 @@ function NormalisedObservation(
     )
 end
 
-function (o::NormalisedObservation)(state::Vector{Float64})
-    obs = o.base_function(state)
+function (o::NormalisedObservation)(
+    state::Vector{Float64}, rng::AbstractRNG = default_rng()
+)
+    obs = o.base_function(state, rng)
     delta_obs = obs .- o.observations_mean  # Update mean.
     @. o.observations_mean += delta_obs / (o.count[] + 1)
     delta_obs_new = obs .- o.observations_mean  # Update variance.

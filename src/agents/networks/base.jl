@@ -108,14 +108,14 @@ function _create_ffn(
     if recurrence
         intermediate_layers = vcat(
             isnothing(dropout) ? [] : Dropout(dropout; rng=rng),
-            !layer_norm ? [] : CustomLayerNorm(hiddens[1]),
+            !layer_norm ? [] : LayerNorm(hiddens[1]),
             isnothing(dropout) & !layer_norm ? [] : activation,
             GRUv3Cell(hiddens[1], hiddens[1]; init=init(rng)),
         )
     else
         intermediate_layers = vcat(
             isnothing(dropout) ? [] : Dropout(dropout; rng=rng),
-            !layer_norm ? [] : CustomLayerNorm(hiddens[1]),
+            !layer_norm ? [] : LayerNorm(hiddens[1]),
             isnothing(dropout) & !layer_norm ? [] : activation,
         )
     end
@@ -138,7 +138,7 @@ function _create_ffn(
                     init=init(rng),
                 ),
                 isnothing(dropout) ? [] : Dropout(dropout; rng=rng),
-                !layer_norm ? [] : CustomLayerNorm(hiddens[i]),
+                !layer_norm ? [] : LayerNorm(hiddens[i]),
                 isnothing(dropout) & !layer_norm ? [] : activation,
             )
         ]...,

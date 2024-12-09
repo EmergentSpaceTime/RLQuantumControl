@@ -18,44 +18,20 @@ using .RLQuantumControl
 CONFIG = parsefile(ARGS[1])
 EPISODES = ARGS[2]
 SEED = CONFIG["seed"]
-LABEL = ["", "", "", ""]
+LABEL = ["", "", "", "", ""]
 
 # Setup seed and custom labels
 seed!(SEED + parse(Int, ARGS[3]))
 LABEL[1] = "_seed=" * string(SEED)
-LABEL[2] = "_ndrift=" * string(CONFIG["noises_drift"])
-LABEL[3] = "_nepss=" * string(CONFIG["noises_epsilon_s"])
-LABEL[4] = "_nepsf=" * string(CONFIG["noises_epsilon_f"])
-
-#####################
-# Setup environment #
-#####################
-if CONFIG["shaping"] == "none"
-    # LABEL[2] = "_shaping=none"
-elseif CONFIG["shaping"] == "fir"
-    # LABEL[2] = "_shaping=fir"
-end
-
-if CONFIG["pulse"] == "none"
-elseif CONFIG["pulse"] == "both"
-    if CONFIG["reward"] != "robust"
-    else
-    end
-end
-
-if CONFIG["observation"] == "full"
-    # LABEL[3] = "_observation=full"
-end
-
-if CONFIG["reward"] == "sparse"
-    # LABEL[5] = "_reward=sparse"
-elseif CONFIG["reward"] == "robust"
-    # LABEL[5] = "_reward=robust"
-end
+LABEL[2] = "_inputs=" * string(CONFIG["inputs"])
+LABEL[3] = "_plength=" * string(CONFIG["plength"])
+LABEL[4] = "_observation=" * CONFIG["observation"]
+# LABEL[5] = "_reward=" * CONFIG["reward"]
 
 prefix = (
-    "data/robust_reward_noises/qdot"
-    * "_episodes="
+    "data/"
+    * ARGS[4]
+    * "/episodes="
     * EPISODES
     * LABEL[1]
     * LABEL[2]

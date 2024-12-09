@@ -1,13 +1,15 @@
 module RLQuantumControl
+    using BSON: @save
     using ChainRulesCore: @ignore_derivatives
     using Dierckx: Spline1D
     using Distributions: Multinomial
     using FFTW: ifft
     using Flux: AbstractDevice, AdamW, Chain, ClipNorm, Dense, Dropout,
-        Embedding, FluxCPUDevice, GRUv3Cell, MultiHeadAttention, OptimiserChain,
-        Scale, cpu, f32, gelu, glorot_normal, ignore, normalise, mse, params,
-        relu, setup, unsqueeze, update!, withgradient, @layer,
+        Embedding, FluxCPUDevice, GRUv3Cell, LayerNorm, MultiHeadAttention,
+        OptimiserChain, Scale, cpu, f32, gelu, glorot_normal, ignore, normalise,
+        mse, params, relu, setup, unsqueeze, update!, withgradient, @layer,
         _greek_ascii_depwarn, _size_check
+    using HDF5: close, create_dataset, h5open, write
     using IntervalSets: ClosedInterval, leftendpoint, rightendpoint
     using LinearAlgebra: Hermitian, I, diag, diagm, dot, eigvals, qr, svd
     using NNlib: make_causal_mask
@@ -54,7 +56,7 @@ module RLQuantumControl
     export reset!
 
     # Agent exports
-    export CustomLayerNorm
+    # export CustomLayerNorm, GPT
     export Memory, ReplayBuffer
     export Agent, SACAgent, SACNetworks, SACParameters, evaluation_steps!,
         get_action, get_random_action, learn!, trainer_steps!

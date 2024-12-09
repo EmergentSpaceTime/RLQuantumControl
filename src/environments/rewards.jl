@@ -145,11 +145,13 @@ reward_space(::SparseGateFidelity) = ClosedInterval(0.0, 6.0)
 struct RobustGateFidelity{
     M <: ModelFunction,
     P <: Union{PulseFunction, Chain{<:Tuple{Vararg{PulseFunction}}}},
+    O <: Union{Nothing, ObservationFunction},
     I <: Union{Nothing, AbstractVector{Int}},
 } <: RewardFunction
     target::Matrix{ComplexF64}
     model_function::M
     pulse_function::P
+    observation_function::O
     computational_indices::I
     n_runs::Int
     _pulse_history::SubArray{
@@ -169,6 +171,7 @@ end
         pulse_function::Union{
             PulseFunction, Chain{<:Tuple{Vararg{PulseFunction}}}
         },
+        observation_function::Union{Nothing, ObservationFunction} = nothing,
         computational_indices::Union{Nothing, AbstractVector{Int}} = nothing,
         n_runs::Int = 50,
     )
@@ -184,6 +187,8 @@ Args:
   * `pulse_history`: Pulse history matrix (a view is made to avoid copying). If
         there is pulse shaping, use the shaped pulse history.
   * `pulse_function`: Pulse function (optionally with noise).
+  * `observation_function`: Observation function if using statistics to get
+        final gate (default: `nothing`).
   * `computational_indices`: Computational subspace to calculate the fidelity.
         If `nothing`, the full matrix is used (default: `nothing`).
 
@@ -194,6 +199,7 @@ Fields:
   * `target`: Target unitary matrix.
   * `model_function`: Model function.
   * `pulse_function`: Pulse function.
+  * `observation_function`: Observation function.
   * `computational_indices`: Computational subspace.
   * `n_runs`: Number of runs.
 """
@@ -202,6 +208,7 @@ function RobustGateFidelity(
     model_function::ModelFunction,
     pulse_history::Matrix{Float64},
     pulse_function::Union{PulseFunction, Chain{<:Tuple{Vararg{PulseFunction}}}},
+    observation_function::Union{Nothing, ObservationFunction} = nothing,
     computational_indices::Union{Nothing, AbstractVector{Int}} = nothing;
     n_runs::Int = 50,
 )
@@ -214,10 +221,16 @@ function RobustGateFidelity(
             )
         )
     end
-    return RobustGateFidelity(
+    return RobustGateFidelity{
+        typeof(model_function),
+        typeof(pulse_function),
+        typeof(observation_function),
+        typeof(computational_indices),
+    }(
         target,
         model_function,
         pulse_function,
+        observation_function,
         computational_indices,
         n_runs,
         view(pulse_history, :, :),
@@ -239,6 +252,15 @@ function (r::RobustGateFidelity)(
                     * r.model_function(
                         r.pulse_function(j, r._pulse_history[:, j])
                     )
+                )
+            end
+            if isa(r.observation_function, UnitaryTomography)
+                u .= r.observation_function(
+                    vcat(
+                        zeros(size(r._pulse_history, 1) + 1),
+                        vec(reinterpret(Float64, u)),
+                    ),
+                    rng,
                 )
             end
             if isnothing(r.computational_indices)
