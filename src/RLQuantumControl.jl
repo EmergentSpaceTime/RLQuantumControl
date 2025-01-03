@@ -1,20 +1,21 @@
 module RLQuantumControl
     using BSON: @save
-    using ChainRulesCore: @ignore_derivatives
+    using ChainRulesCore: ignore_derivatives
     using Dierckx: Spline1D
     using Distributions: Multinomial
     using FFTW: ifft
-    using Flux: AbstractDevice, AdamW, Chain, ClipNorm, Dense, Dropout,
-        Embedding, FluxCPUDevice, GRUv3Cell, LayerNorm, MultiHeadAttention,
-        OptimiserChain, Scale, cpu, f32, gelu, glorot_normal, ignore, normalise,
-        mse, params, relu, setup, unsqueeze, update!, withgradient, @layer,
-        _greek_ascii_depwarn, _size_check
+    using Flux: AdamW, Chain, ClipNorm, Dense, Dropout, Embedding, GRUv3Cell,
+        LayerNorm, MultiHeadAttention, OptimiserChain, Scale, cpu, f32, gelu,
+        gpu, glorot_normal, normalise, mse, params, relu, setup, unsqueeze,
+        update!, withgradient, @layer, _size_check
     using HDF5: close, create_dataset, h5open, write
     using IntervalSets: ClosedInterval, leftendpoint, rightendpoint
     using LinearAlgebra: Hermitian, I, diag, diagm, dot, eigvals, qr, svd
     using NNlib: make_causal_mask
     using Random: AbstractRNG, default_rng
     using StatsBase: mean, sample
+
+    import Flux: trainable
 
 
     # Environment files
@@ -29,6 +30,7 @@ module RLQuantumControl
 
     # Agent files
     include("agents/networks/ln.jl")
+    include("agents/networks/recurrent.jl")
     include("agents/networks/gpt.jl")
     include("agents/networks/base.jl")
 

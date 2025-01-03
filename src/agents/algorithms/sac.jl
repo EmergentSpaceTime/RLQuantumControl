@@ -1,19 +1,10 @@
 """
-    SACParameters(
-        action_scale::Vector{Float32},
-        action_bias::Vector{Float32},
-        H_bar::Float32;
-        kwargs...,
-    )
+    SACParameters(H_bar::Float32; kwargs...)
 
 Parameter struct for SAC algorithm.
 
-Fields:
-  * `action_scale`: The scale to match the action space of the continuous
-        environment.
-  * `action_bias`: The bias to match the action space of the continous
-        environment.
-  * `H_bar`: Target entropy, usually equals to -dim(`action_space`).
+Fields (& Kwargs):
+  * `H_bar`: Target entropy (usually -dim(`action_space`)).
   * `capacity`: Number of transitions stored in memory (default: `100000`).
   * `hiddens`: Dimensions of hidden layers (default: `[256, 256]`).
   * `log_var_min`: Minium log standard deviation for stable training (default:
@@ -41,8 +32,6 @@ Fields:
   * `episodes`: Number of total episodes (default: `5000`).
 """
 @kwdef struct SACParameters
-    action_scale::Vector{Float32}
-    action_bias::Vector{Float32}
     H_bar::Float32
     capacity::Int = 100000
     hiddens::Vector{Int} = [256, 256]
@@ -58,7 +47,7 @@ Fields:
     training_steps::Int = 20
     decays::Vector{Float32} = [0.0, 0.0, 0.0, 0.0]
     clips::Vector{Float32} = [5.0, 5.0, 5.0, 5.0]
-    eta::Vector{Float32} = [3e-4, 3e-4, 3e-4, 3e-4]
+    eta::Vector{Float32} = [3e-4, 3e-4, 3e-4, 3e-4, 3e-4]
     rho::Float32 = 0.005
     warmup_normalisation_episodes::Int = 50
     warmup_evaluation_episodes::Int = 50
@@ -66,23 +55,145 @@ Fields:
 end
 
 
+struct SACNetworks{
+    B <: Union{Nothing, GPT, Recurrent},
+    P <: Chain,
+    Q <: Chain,
+    A <: AbstractArray{Float32, 0},
+    T <: AbstractVector{Float32},
+}
+    base_layer::B
+    policy_layers::P
+    Q_1_layers::Q
+    Q_1_target_layers::Q
+    Q_2_layers::Q
+    Q_2_target_layers::Q
+    log_alpha::A
+    action_scale::T
+    action_bias::T
+end
+
+@layer SACNetworks
+
+function trainable(n::SACNetworks)
+    return (
+        ;
+        base_layer=n.base_layer,
+        policy_layers=n.policy_layers,
+        Q_1_layers=n.Q_1_layers,
+        Q_1_target_layers=n.Q_1_target_layers,
+        Q_2_layers=n.Q_2_layers,
+        Q_2_target_layers=n.Q_2_target_layers,
+        log_alpha=n.log_alpha,
+    )
+end
+
+function SACNetworks(
+    observation_dim::Int,
+    action_dim::Int,
+    action_space::Vector{ClosedInterval{Float32}};
+    base_layer::String = "none",
+    embedding_dim::Int = 128,
+    hiddens::Vector{Int} = [256, 256],
+    q_n::Int = 1,
+    q_dropout::Float32 = 0.0f0,
+    q_layer_norm::Bool = false,
+    activation::Function = relu,
+    init::Function = glorot_normal,
+    rng::AbstractRNG = default_rng(),
+)
+    continuous = isa(action_space, Vector{ClosedInterval{Float32}})
+    if base_layer == "gpt"
+        base_layer = GPT(
+            observation_dim,
+            action_dim,
+            continuous;
+            embedding_dim=embedding_dim,
+        )
+    elseif base_layer == "recurrent"
+        base_layer = Recurrent(
+            observation_dim,
+            action_dim,
+            continuous;
+            embedding_dim=embedding_dim,
+            init=init,
+            rng=rng,
+        )
+    elseif base_layer == "none"
+        base_layer = nothing
+    else
+        throw(
+            ArgumentError(
+                "Invalid base layer: '$base_layer'. Must be 'gpt', 'recurrent',"
+                * " or 'none'."
+            )
+        )
+    end
+    policy_layers = _create_ffn(
+        base_layer == "none" ? observation_dim : embedding_dim,
+        hiddens;
+        out=action_dim,
+        double_out=continuous,
+        activation=activation,
+        init=init,
+        rng=rng,
+    )
+    Q_1_layers = _create_ffn(
+        base_layer == "none" ? observation_dim + action_dim : embedding_dim,
+        hiddens;
+        out=q_n,
+        dropout=iszero(q_dropout) ? nothing : q_dropout,
+        layer_norm=q_layer_norm,
+        activation=activation,
+        init=init,
+        rng=rng,
+    )
+    Q_2_layers = _create_ffn(
+        base_layer == "none" ? observation_dim + action_dim : embedding_dim,
+        hiddens;
+        out=q_n,
+        dropout=iszero(q_dropout) ? nothing : q_dropout,
+        layer_norm=q_layer_norm,
+        activation=activation,
+        init=init,
+        rng=rng,
+    )
+    log_alpha = zeros(Float32)
+
+    action_scale = @. (
+        (rightendpoint(action_space) - leftendpoint(action_space)) / 2
+    )
+    action_bias = @. (
+        (rightendpoint(action_space) + leftendpoint(action_space)) / 2
+    )
+    return SACNetworks(
+        base_layer,
+        policy_layers,
+        Q_1_layers,
+        deepcopy(Q_1_layers),
+        Q_2_layers,
+        deepcopy(Q_2_layers),
+        log_alpha,
+        action_scale,
+        action_bias,
+    )
+end
+
+
 struct SACAgent{
     M <: ReplayBuffer,
     N <: SACNetworks,
     O <: AbstractVector,
-    D <: AbstractDevice,
-} <: Agent{M, N, O, D}
+} <: Agent{M, N, O}
     params::SACParameters
     memory::M
     networks::N
     opt_states::O
-    device::D
 end
 
 """
     SACAgent(
         env::QuantumControlEnvironment,
-        device::AbstractDevice = FluxCPUDevice(),
         rng::AbstractRNG = default_rng();
         kwargs...
     )
@@ -96,7 +207,6 @@ Args:
   * `env`: The environment that the agent learns. This just extracts relavant
         information from the environment such as the observation and action
         spaces.
-  * `device`: Device for neural networks (default: [`Flux.FluxCPUDevice()`]()).
   * `rng`: Random number generator (default: [`Random.default_rng()`]()).
 
 Kwargs:
@@ -110,11 +220,9 @@ Fields:
   * `memory`: Replay buffer with a history of transitions.
   * `networks`: Neural networks.
   * `opt_states`: Neural networks optimiser states.
-  * `device`: Device for neural networks.
 """
 function SACAgent(
     env::QuantumControlEnvironment,
-    device::AbstractDevice = FluxCPUDevice(),
     rng::AbstractRNG = default_rng();
     activation::Function = relu,
     init::Function = glorot_normal,
@@ -122,31 +230,19 @@ function SACAgent(
 )
     observation_dim = length(env.observation_space)
     action_dim = length(env.action_space)
-    action_scale = @. (
-        (rightendpoint(env.action_space) - leftendpoint(env.action_space)) / 2
-    )
-    action_bias = @. (
-        (rightendpoint(env.action_space) + leftendpoint(env.action_space)) / 2
-    )
     H_bar = -action_dim
 
-    params = SACParameters(
-        ;
-        action_scale=action_scale,
-        action_bias=action_bias,
-        H_bar=H_bar,
-        kwargs...,
-    )
+    params = SACParameters(; H_bar=H_bar, kwargs...)
     memory = ReplayBuffer(true, observation_dim, action_dim, params.capacity)
-    networks = device(
+    networks = gpu(
         SACNetworks(
-            true,
             observation_dim,
             action_dim,
+            env.action_space;
             params.use_tqc ? params.n_q : 1,
-            params.hiddens,
-            params.dropout,
-            params.layer_norm;
+            hiddens=params.hiddens,
+            q_dropout=params.dropout,
+            q_layer_norm=params.layer_norm,
             activation=activation,
             init=init,
             rng=rng,
@@ -161,13 +257,14 @@ function SACAgent(
             network,
         )
         for (i, network) in [
-            (1, networks.policy_layers),
-            (2, networks.Q_1_layers),
-            (3, networks.Q_2_layers),
-            (4, networks.logα),
+            (1, networks.base_layer),
+            (2, networks.policy_layers),
+            (3, networks.Q_1_layers),
+            (4, networks.Q_2_layers),
+            (5, networks.logα),
         ]
     ]
-    return SACAgent(params, memory, networks, opt_states, device)
+    return SACAgent(params, memory, networks, opt_states)
 end
 
 """
@@ -193,7 +290,7 @@ function get_action(
     rng::AbstractRNG = default_rng(),
 )
     μ, log_var_u = cpu(
-        agent.networks.policy_layers(agent.device(f32(observation)))
+        agent.networks.policy_layers(gpu(f32(observation)))
     )
     log_var = @. (
         agent.params.log_var_min
@@ -203,8 +300,8 @@ function get_action(
     )
     N_01 = randn(rng, Float32, length(μ))
     action = @. (
-       tanh(μ + exp(log_var / 2) * N_01) * agent.params.action_scale
-       + agent.params.action_bias
+       tanh(μ + exp(log_var / 2) * N_01) * agent.networks.action_scale
+       + agent.networks.action_bias
     )
     return convert(Vector{Float64}, action)
 end
@@ -213,9 +310,9 @@ function get_random_action(agent::SACAgent, rng::AbstractRNG = default_rng())
     return convert(
         Vector{Float64},
         @. (
-            tanh($randn(rng, Float32, $length(agent.params.action_scale)))
-            * agent.params.action_scale
-            + agent.params.action_bias
+            tanh($randn(rng, Float32, $length(agent.networks.action_scale)))
+            * agent.networks.action_scale
+            + agent.networks.action_bias
         )
     )
 end
@@ -318,11 +415,11 @@ function _update_agent_networks_tqc!(
     )
     u′ = @. μ′ + exp(log_var′ / 2) * $randn(rng, $eltype(μ′), $size(μ′))
     v′ = tanh.(u′)
-    𝐚′ = @. v′ * agent.params.action_scale + agent.params.action_bias
+    𝐚′ = @. v′ * agent.networks.action_scale + agent.networks.action_bias
     logπₐ′ = sum(
         @. (
             -0.5f0 * (log_var′ + (u′ - μ′) ^ 2 / exp(log_var′) + log(2f0π))
-            - log(agent.params.action_scale * (1 - v′ ^ 2) + eps(Float32))
+            - log(agent.networks.action_scale * (1 - v′ ^ 2) + eps(Float32))
         );
         dims=1,
     )
@@ -380,13 +477,13 @@ function _update_agent_networks_tqc!(
         )
         u = @. μ + exp(log_var / 2) * $randn(rng, $eltype(μ), $size(μ))
         v = tanh.(u)
-        𝐚̃ = @. v * agent.params.action_scale + agent.params.action_bias
+        𝐚̃ = @. v * agent.networks.action_scale + agent.networks.action_bias
         logπᶿₐ̃ = vec(
             sum(
                 @. (
                     -0.5f0 * (log_var + (u - μ) ^ 2 / exp(log_var) + log(2f0π))
                     - log(
-                        agent.params.action_scale * (1 - v ^ 2) + eps(Float32)
+                        agent.networks.action_scale * (1 - v ^ 2) + eps(Float32)
                     )
                 );
                 dims=1,
@@ -399,7 +496,7 @@ function _update_agent_networks_tqc!(
         Q̃ = vcat(Q̃₁, Q̃₂)
         Q̃ₘₑₐₙ = vec(mean(Q̃; dims=(1, 2)))
 
-        ignore() do
+        ignore_derivatives() do
             losses[2] = -mean(logπᶿₐ̃)
             losses[6] = mean(Q̃₁)
             losses[7] = mean(Q̃₂)
@@ -433,12 +530,12 @@ function _update_agent_networks_base!(
     )
     u′ = @. μ′ + exp(log_var′ / 2) * $randn(rng, $eltype(μ′), $size(μ′))
     v′ = tanh.(u′)
-    𝐚′ = @. v′ * agent.params.action_scale + agent.params.action_bias
+    𝐚′ = @. v′ * agent.networks.action_scale + agent.networks.action_bias
     logπₐ′ = vec(
         sum(
             @. (
                 -0.5f0 * (log_var′ + (u′ - μ′) ^ 2 / exp(log_var′) + log(2f0π))
-                - log(agent.params.action_scale * (1 - v′ ^ 2) + eps(Float32))
+                - log(agent.networks.action_scale * (1 - v′ ^ 2) + eps(Float32))
             );
             dims=1,
         )
@@ -476,13 +573,13 @@ function _update_agent_networks_base!(
         )
         u = @. μ + exp(log_var / 2) * $randn(rng, $eltype(μ), $size(μ))
         v = tanh.(u)
-        𝐚̃ = @. v * agent.params.action_scale + agent.params.action_bias
+        𝐚̃ = @. v * agent.networks.action_scale + agent.networks.action_bias
         logπᶿₐ̃ = vec(
             sum(
                 @. (
                     -0.5f0 * (log_var + (u - μ) ^ 2 / exp(log_var) + log(2f0π))
                     - log(
-                        agent.params.action_scale * (1 - v ^ 2) + eps(Float32)
+                        agent.networks.action_scale * (1 - v ^ 2) + eps(Float32)
                     )
                 );
                 dims=1,
@@ -492,7 +589,7 @@ function _update_agent_networks_base!(
         Q₁ = vec(agent.networks.Q_1_layers(𝐬𝐚̃))
         Q₂ = vec(agent.networks.Q_2_layers(𝐬𝐚̃))
         Qₘᵢₙ = min.(Q₁, Q₂)
-        ignore() do
+        ignore_derivatives() do
             losses[2] = -mean(logπᶿₐ̃)
             losses[6] = mean(Q₁)
             losses[7] = mean(Q₂)
