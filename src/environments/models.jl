@@ -3,7 +3,6 @@
 #################
 # 1 / ns = 6.582119569e-7 eV
 # 1mT = 0.087953 GHz
-# 1 eV = (1 / 6.582119e-7) GHz
 
 """Abstract callable struct that creates an evolution operator (e.g. unitary
 from Hamiltonian) from an inputted pulse (at the that time step). Models may
@@ -70,7 +69,7 @@ end
         j_0::Real = 1.0,
         epsilon_0::Real = 0.272,
         e_coupling::Real = 0.0,
-        sigma_b::Real = 0.0263859,
+        sigma_b::Real = 0.0,
     )
 
 Two-qubit double quantum dot model with three controls
@@ -121,7 +120,7 @@ Kwargs:
   * `e_coupling`: Coupling parameter for leakage in ``\\mu``eV (default:
         `0.0`).
   * `sigma_b`: Standard deviation of the slow noise on the magnetic field
-        gradients (default: `0.0263859`).
+        gradients (default: `0.0`).
 
 Fields:
   * `h_drift`: Drift components of Hamiltonian.
@@ -135,7 +134,7 @@ function QuantumDot2(
     j_0::Real = 1.0,
     epsilon_0::Real = 0.272,
     e_coupling::Real = 0.0,
-    sigma_b::Real = 0.0263859,
+    sigma_b::Real = 0.0,
 )
     if delta_t <= zero(delta_t)
         throw(ArgumentError("`delta_t` must be positive."))

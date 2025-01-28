@@ -136,6 +136,7 @@ _n_ts(n::WhiteNoiseInjection) = size(n._noises_episode, 2)
 struct ColouredNoiseInjection <: PulseFunction
     s_0::Float64
     alpha::Float64
+    f_s::Float64
     _noises_episode::Matrix{Float64}
 end
 
@@ -161,13 +162,15 @@ Args:
         includes oversampling).
   * `s_0`: Noise power constant.
   * `alpha`: Noise power exponent.
+  * `f_s`: Sampling frequency.
 
 Fields:
   * `s_0`: Noise power constant.
   * `alpha`: Noise power exponent.
+  * `f_s`: Sampling frequency.
 """
 function ColouredNoiseInjection(
-    n_controls::Int, n_ts::Int, s_0::Real, alpha::Real
+    n_controls::Int, n_ts::Int, s_0::Real, alpha::Real, f_s::Real
 )
     n_controls < 1 && throw(ArgumentError("`n_controls` must be >= 1."))
     n_ts < 1 && throw(ArgumentError("`n_ts` must be >= 1."))
@@ -179,7 +182,7 @@ function ColouredNoiseInjection(
             )
         )
     end
-    return ColouredNoiseInjection(s_0, alpha, zeros(n_controls, n_ts))
+    return ColouredNoiseInjection(s_0, alpha, f_s, zeros(n_controls, n_ts))
 end
 
 function (n::ColouredNoiseInjection)(t_step::Int, epsilon_t::Vector{Float64})
@@ -191,6 +194,7 @@ function reset!(n::ColouredNoiseInjection, rng::AbstractRNG = default_rng())
         size(n._noises_episode, 2),
         size(n._noises_episode, 1),
         n.alpha,
+        n.f_s,
         n.s_0,
         rng,
     )

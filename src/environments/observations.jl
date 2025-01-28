@@ -389,8 +389,8 @@ function (o::NormalisedObservation)(
     obs = o.base_function(state, rng)
     delta_obs = obs .- o.observations_mean  # Update mean.
     @. o.observations_mean += delta_obs / (o.count[] + 1)
-    delta_obs_new = obs .- o.observations_mean  # Update variance.
-    @. o.observations_var = (
+    delta_obs_new = obs .- o.observations_mean
+    @. o.observations_var = (  # Update variance.
         o.count[] * o.observations_var / (o.count[] + 1)
         + delta_obs * delta_obs_new / (o.count[] + 1)
     )

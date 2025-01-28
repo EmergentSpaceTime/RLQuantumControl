@@ -15,25 +15,19 @@ using BSON: @save, @load
 include("../../src/RLQuantumControl.jl")
 using .RLQuantumControl
 
-################
-# Setup config #
-################
+#################
+# Setup config. #
+#################
 CONFIG = parsefile(ARGS[1])
 EPISODES = ARGS[2]
 SEED = CONFIG["seed"]
-LABEL = ["", "", "", "", ""]
 
-# Setup seed and custom labels
+# Setup seed and custom labels.
 seed!(SEED)
-LABEL[1] = "_seed=" * string(SEED)
-LABEL[2] = "_inputs=" * string(CONFIG["inputs"])
-LABEL[3] = "_plength=" * string(CONFIG["plength"])
-LABEL[4] = "_observation=" * CONFIG["observation"]
-# LABEL[5] = "_reward=" * CONFIG["reward"]
 
-#####################
-# Setup environment #
-#####################
+######################
+# Setup environment. #
+######################
 # Input function.
 input_function = IdentityInput(
     3; control_min=fill(-5.4, 3), control_max=fill(2.4, 3)
@@ -43,18 +37,22 @@ if CONFIG["shaping"] == "none"
     shaping_function = IdentityShaping(3, CONFIG["inputs"])
 elseif CONFIG["shaping"] == "fir"
     response_data = readdlm("response_data.txt")
-    response_data[:, 2] .*= 0.020586246976990772 .* 1.0569028985914874
+    response_data[:, 1] .-= 0.6
+    response_data[:, 2] ./= (
+        maximum(abs.(response_data[:, 2])) * CONFIG["srate"] * 1.26
+    )
     shaping_function = FilterShaping(
         3,
         CONFIG["inputs"],
         Spline1D(response_data[:, 1], response_data[:, 2]; bc="zero");
         boundary_values=hcat(fill(-5.4, 3), fill(-5.4, 3)),
+        boundary_padding=[5, 4],
         sampling_rate=CONFIG["srate"],
     )
 elseif CONFIG["shaping"] == "gauss"
     mu = CONFIG["mu"]
-    scale = 0.91
-    sigma = 0.5
+    sigma = CONFIG["sigma"]
+    scale = 0.071 / CONFIG["srate"] * 10
     shaping_function = FilterShaping(
         3,
         CONFIG["inputs"],
@@ -67,6 +65,7 @@ elseif CONFIG["shaping"] == "gauss"
             bc="zero",
         );
         boundary_values=hcat(fill(-5.4, 3), fill(-5.4, 3)),
+        boundary_padding=[5, 4],
         sampling_rate=CONFIG["srate"],
     )
 end
@@ -76,13 +75,13 @@ model_function = QuantumDot2(
     delta_t=(
         CONFIG["plength"]
         / (
-            hasfield(typeof(shaping_function), :shaped_pulse_history)
-            ? size(shaping_function.shaped_pulse_history, 2)
-            : size(shaping_function.pulse_history, 2)
+            hasfield(typeof(shaping_function), :shaped_pulse_history) ?
+            size(shaping_function.shaped_pulse_history, 2) :
+            size(shaping_function.pulse_history, 2)
         )
     ),
     sigma_b=(
-        CONFIG["reward"] == "robust" ? 0.0 : CONFIG["ndrift"] * 0.0105557513
+        CONFIG["reward"] == "robust" ? 0.0 : CONFIG["ndrift"] * 0.0105
     ),
 )
 # Pulse function.
@@ -97,15 +96,17 @@ elseif CONFIG["pulse"] == "both"
                 (
                     CONFIG["shaping"] == "none" ?
                     CONFIG["inputs"] :
-                    (CONFIG["inputs"] + 5) * CONFIG["srate"]
+                    (
+                        (
+                            CONFIG["inputs"]
+                            + shaping_function.boundary_padding[2]
+                        )
+                        * CONFIG["srate"]
+                    )
                 ),
-                (
-                    CONFIG["nepsf"]
-                    * 8e-16
-                    * (1 / 0.272e-3 ^ 2)
-                    * (1 / (model_function.delta_t * 1e-9)) ^ (1 - 0.7)
-                ),
+                CONFIG["nepsf"] * 8.57e-9,
                 0.7,
+                1 / (2π * model_function.delta_t * 1e-9),
             ),
             ExponentialPulse(),
         )
@@ -117,7 +118,15 @@ end
 if CONFIG["observation"] == "full"
     observation_function = FullObservation()
 elseif CONFIG["observation"] == "noisy"
-    observation_function = UnitaryTomography(3, "unitary", 6, true; n=100000)
+    if CONFIG["nmeasures"] == "nothing"
+        observation_function = UnitaryTomography(
+            3, "unitary", 6, true; n=CONFIG["nmeasures"]
+        )
+    else
+        observation_function = FullObservation()
+    end
+elseif CONFIG["observation"] == "process"
+    observation_function = ExactTomography(3, "process", 6, false)
 end
 # Reward function.
 if CONFIG["reward"] == "sparse"
@@ -130,7 +139,7 @@ elseif CONFIG["reward"] == "robust"
         QuantumDot2(
             ;
             delta_t=model_function.delta_t,
-            sigma_b=CONFIG["ndrift"] * 0.0105557513,
+            sigma_b=CONFIG["ndrift"] * 0.0105,
         ),
         shaping_function.shaped_pulse_history,
         Chain(
@@ -140,22 +149,24 @@ elseif CONFIG["reward"] == "robust"
                 (
                     CONFIG["shaping"] == "none" ?
                     CONFIG["inputs"] :
-                    (CONFIG["inputs"] + 5) * CONFIG["srate"]
+                    (
+                        (
+                            CONFIG["inputs"]
+                            + shaping_function.boundary_padding[2]
+                        )
+                        * CONFIG["srate"]
+                    )
                 ),
-                (
-                    CONFIG["nepsf"]
-                    * 8e-16
-                    * (1 / 0.272e-3 ^ 2)
-                    * (1 / (model_function.delta_t * 1e-9)) ^ (1 - 0.7)
-                ),
+                CONFIG["nepsf"] * 8.57e-9,
                 0.7,
+                1 / (2π * model_function.delta_t * 1e-9),
             ),
             ExponentialPulse(),
         ),
         (
-            CONFIG["nmeas"] == Int(1e10) ?
+            CONFIG["nmeasures"] == "nothing" ?
             nothing :
-            UnitaryTomography(3, "unitary", 6, true; n=CONFIG["nmeas"])
+            UnitaryTomography(3, "unitary", 6, true; n=CONFIG["nmeasures"])
         ),
         2:5,
     )
@@ -196,21 +207,10 @@ agent = SACAgent(
 )
 r, l = learn!(agent, env)
 
-prefix = (
-    "data/"
-    * ARGS[3]
-    * "/episodes="
-    * EPISODES
-    * LABEL[1]
-    * LABEL[2]
-    * LABEL[3]
-    * LABEL[4]
-)
+@save CONFIG["save_directory"] * "environment.bson" env
+@save CONFIG["save_directory"] * "agent.bson" agent
 
-@save prefix * "_environment.bson" env
-@save prefix * "_agent.bson" agent
-
-d_file = h5open(prefix * "_data=0.h5", "cw")
+d_file = h5open(CONFIG["save_directory"] * "data=0.h5", "cw")
 fset = create_dataset(d_file, "r", eltype(r), size(r))
 fset = create_dataset(d_file, "l", eltype(l), size(l))
 write(d_file["r"], r)

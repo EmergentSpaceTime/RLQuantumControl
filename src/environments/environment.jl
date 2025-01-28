@@ -207,7 +207,7 @@ function reset!(
 
     env._t_step[] = 0
     env._state_t .= env.n_inputs
-    env._state_p .= zero(env._state_p)
+    env._state_p .= zero(Float64)
     env._state_m .= Matrix(I, size(env._state_m))
     return env.observation_function(env._state, rng)
 end
@@ -246,9 +246,7 @@ function step!(
     env._state_t .-= 1
     env._state_p .= env.input_function(env._state_p, action)
 
-    t_bar, epsilon_t_bar = env.shaping_function(
-        env._t_step[], env._state_p, env.model_function.delta_t
-    )
+    t_bar, epsilon_t_bar = env.shaping_function(env._t_step[], env._state_p)
     for i in axes(epsilon_t_bar, 2)
         u = env.model_function(
             env.pulse_function(t_bar[i], epsilon_t_bar[:, i])

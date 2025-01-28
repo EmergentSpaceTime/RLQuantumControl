@@ -57,6 +57,7 @@ end
         n::Int,
         k::Int,
         alpha::Real,
+        f_s::Real = 1.0,
         scale::Real = 1.0,
         rng::AbstractRNG = default_rng();
         normalise::Bool = false,
@@ -72,6 +73,7 @@ Args:
   * `n`: Length of time series to generate noise.
   * `k`: Number of independent noise sequences.
   * `alpha`: Power of frequency (e.g. `0` for Gaussian noise).
+  * `f_s`: Sampling frequency (default: `1.0`).
   * `scale`: Scaling of density factor of the noise (default: `1.0`).
   * `rng`: The random number generator to use (default:
         [`Random.default_rng()`]()).
@@ -86,31 +88,24 @@ function power_noise(
     n::Int,
     k::Int,
     alpha::Real,
+    f_s::Real = 1.0,
     scale::Real = 1.0,
     rng::AbstractRNG = default_rng();
     normalise::Bool = false,
 )
-    n_even = iseven(n)
-    n_half = floor(Int, n / 2) - 1 * n_even
-
-    f_powers = unsqueeze((n ./ UnitRange(1, n_half)) .^ (alpha / 2); dims=1)
-    gauss_noises = @. (
-        (1 / sqrt(2)) * ($randn(rng, k, n_half) + $randn(rng, k, n_half) * im)
+    g_noise = rfft(randn(rng, k, n), 2)
+    f_powers = unsqueeze(
+        _psd.(rfftfreq(n, f_s), alpha, scale * (f_s / 2)); dims=1
     )
-    shaped_half = f_powers .* gauss_noises
-
-    if n_even
-        shaped = hcat(
-            zeros(k),
-            shaped_half,
-            randn(rng, k) .* (2 ^ (alpha / 2)),
-            reverse(conj(shaped_half); dims=2),
-        )
-    else
-        shaped = hcat(zeros(k), shaped_half, reverse(conj(shaped_half); dims=2))
-    end
-
-    noise_t = real(ifft(sqrt(scale * n) .* shaped, 2))
+    noise_t = irfft(g_noise .* f_powers, n, 2)
     normalise && return @. noise_t / sqrt($mean(noise_t ^ 2, dims=2))
     return noise_t
+end
+
+
+function _psd(f::Real, alpha::Real, scale::Real)
+    if iszero(f)
+        return zero(Float64)
+    end
+    return sqrt(scale) * (1 / f) ^ (alpha / 2)
 end

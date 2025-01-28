@@ -3,7 +3,7 @@ module RLQuantumControl
     using ChainRulesCore: @ignore_derivatives
     using Dierckx: Spline1D
     using Distributions: Multinomial
-    using FFTW: ifft
+    using FFTW: irfft, rfft, rfftfreq
     using Flux: AbstractDevice, AdamW, Chain, ClipNorm, Dense, Dropout,
         Embedding, FluxCPUDevice, GRUv3Cell, LayerNorm, MultiHeadAttention,
         OptimiserChain, Scale, cpu, f32, gelu, glorot_normal, ignore, normalise,

@@ -334,17 +334,14 @@ function (r::NormalisedReward)(
 )
     reward = r.base_function(u, done, rng)
     r.return_e[] = r.return_e[] * r.gamma + reward
-    # Update mean
-    delta_r = r.return_e[] - r.returns_mean[]
+    delta_r = r.return_e[] - r.returns_mean[]  # Update mean.
     r.returns_mean[] += delta_r / (r.count[] + 1)
-    # Update variance
-    delta_r_new = r.return_e[] - r.returns_mean[]
-    r.returns_var[] = (
+    delta_r_new = r.return_e[] - r.returns_mean[]  
+    r.returns_var[] = (  # Update variance.
         r.count[] * r.returns_var[] / (r.count[] + 1)
         + delta_r * delta_r_new / (r.count[] + 1)
     )
-    # Update count
-    r.count[] += 1
+    r.count[] += 1  # Update count.
     if done
         r.return_e[] = 0
     end

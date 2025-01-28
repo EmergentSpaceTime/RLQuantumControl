@@ -12,42 +12,24 @@ using HDF5: h5open, create_dataset, write, close
 include("../../src/RLQuantumControl.jl")
 using .RLQuantumControl
 
-################
-# Setup config #
-################
+#################
+# Setup config. #
+#################
 CONFIG = parsefile(ARGS[1])
-EPISODES = ARGS[2]
 SEED = CONFIG["seed"]
-LABEL = ["", "", "", "", ""]
 
-# Setup seed and custom labels
-seed!(SEED + parse(Int, ARGS[3]))
-LABEL[1] = "_seed=" * string(SEED)
-LABEL[2] = "_inputs=" * string(CONFIG["inputs"])
-LABEL[3] = "_plength=" * string(CONFIG["plength"])
-LABEL[4] = "_observation=" * CONFIG["observation"]
-# LABEL[5] = "_reward=" * CONFIG["reward"]
+# Setup seed.
+seed!(SEED + parse(Int, ARGS[2]))
 
-prefix = (
-    "data/"
-    * ARGS[4]
-    * "/episodes="
-    * EPISODES
-    * LABEL[1]
-    * LABEL[2]
-    * LABEL[3]
-    * LABEL[4]
-)
-
-@load prefix * "_environment.bson" env
-@load prefix * "_agent.bson" agent
+@load CONFIG["save_directory"] * "environment.bson" env
+@load CONFIG["save_directory"] * "agent.bson" agent
 
 r, l = learn!(agent, env, false)
 
-@save prefix * "_environment.bson" env
-@save prefix * "_agent.bson" agent
+@save CONFIG["save_directory"] * "environment.bson" env
+@save CONFIG["save_directory"] * "agent.bson" agent
 
-d_file = h5open(prefix * "_data_" * ARGS[3] * ".h5", "cw")
+d_file = h5open(CONFIG["save_directory"] * "data=" * ARGS[2] * ".h5", "cw")
 fset = create_dataset(d_file, "r", eltype(r), size(r))
 fset = create_dataset(d_file, "l", eltype(l), size(l))
 write(d_file["r"], r)
