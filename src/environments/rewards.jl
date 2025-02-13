@@ -345,7 +345,7 @@ function (r::NormalisedReward)(
     if done
         r.return_e[] = 0
     end
-    return reward / sqrt(r.returns_var[] + 1e-6)
+    return reward, reward / sqrt(r.returns_var[] + 1e-6)
 end
 
 reward_space(r::NormalisedReward) = reward_space(r.base_function)

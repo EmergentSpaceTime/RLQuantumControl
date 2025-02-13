@@ -395,9 +395,7 @@ function (o::NormalisedObservation)(
         + delta_obs * delta_obs_new / (o.count[] + 1)
     )
     o.count[] += 1  # Update count.
-    return @. (
-        (obs - o.observations_mean) / sqrt(o.observations_var + 1e-6)
-    )
+    return obs, @. (obs - o.observations_mean) / sqrt(o.observations_var + 1e-6)
 end
 
 function observation_space(

@@ -64,17 +64,19 @@ end
 
 base_config = Dict{String, Vector}(
     "seed" => [1338, 24428, 322, 441, 555, 666, 1996, 1453],
-    "inputs" => [6, 16, 26, 36, 46],
+    "inputs" => [16],
     "sigma" => [0.5],
     "mu" => [1.35],
     "shaping" => ["fir"],  # Kernel for shaping.
     "pulse" => ["both"],
-    "nepss" => [1.0],  # "Fast" pulse noise.
-    "nepsf" => [1.0],  # "Slow" pulse noise.
-    "ndrift" => [1.0],  # Drift noise.
-    "reward" => ["robust"],
-    "observation" => ["full"],
-    "plength" => [10, 15, 20, 25, 30, 35, 40, 45],  # Protocol length.
+    "nepss" => [0.0, 1.0],  # "Fast" pulse noise.
+    "nepsf" => [0.0, 1.0],  # "Slow" pulse noise.
+    "ndrift" => [0.0, 1.0],  # Drift noise.
+    "reward" => ["robust"],  # Reward type.
+    "normalreward" => ["true", "false"],  # Normalise reward.
+    "observation" => ["full"],  # Observation type.
+    "normalobs" => ["true", "false"],  # Normalise observation.
+    "plength" => [20],  # Protocol length.
     "srate" => [10],  # Oversampling rate.
     "nmeasures" => ["nothing"],  # Number of measurements.
     "save_directory" => ["results"],  # Dummy.

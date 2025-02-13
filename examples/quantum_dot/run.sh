@@ -5,6 +5,7 @@
 #SBATCH --job-name=rlqc
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=32
+#SBATCH --cpus-per-task=4
 #SBATCH --time=06:00:00
 
 

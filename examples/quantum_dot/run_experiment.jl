@@ -128,6 +128,12 @@ elseif CONFIG["observation"] == "noisy"
 elseif CONFIG["observation"] == "process"
     observation_function = ExactTomography(3, "process", 6, false)
 end
+if CONFIG["normalobs"] == "true"
+    observation_function = NormalisedObservation(
+        observation_function,
+        isa(observation_function, FullObservation) ? 76 : 73,
+    )
+end
 # Reward function.
 if CONFIG["reward"] == "sparse"
     reward_function = SparseGateFidelity(
@@ -170,6 +176,9 @@ elseif CONFIG["reward"] == "robust"
         ),
         2:5,
     )
+end
+if CONFIG["normalreward"] == "true"
+    reward_function = NormalisedReward(reward_function, 0.99)
 end
 
 env = QuantumControlEnvironment(

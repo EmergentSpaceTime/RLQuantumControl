@@ -231,15 +231,26 @@ function evaluation_steps!(
     done = false
     while !done
         index = update_and_get_index!(agent.memory)
-        agent.memory.observations_t[:, index] = observation
+        if observation isa Tuple
+            agent.memory.observations_t[:, index] = observation[end]
+        else
+            agent.memory.observations_t[:, index] = observation
+        end
 
-        action = get_action(agent, observation, rng)
+        action = get_action(
+            agent,
+            observation isa Tuple ? observation[end] : observation,
+            rng,
+        )
         agent.memory.actions[:, index] = action
 
         observation, done, reward = step!(env, action)
-        agent.memory.observations_tp1[:, index] = observation
-        # agent.memory.rewards[index] = reward[end]
-        agent.memory.rewards[index] = reward[1]
+        if observation isa Tuple
+            agent.memory.observations_tp1[:, index] = observation[end]
+        else
+            agent.memory.observations_tp1[:, index] = observation
+        end
+        agent.memory.rewards[index] = reward[end]
         agent.memory.dones[index] = done
         sum_r += reward[1]
     end
