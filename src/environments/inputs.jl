@@ -147,8 +147,8 @@ Returns:
 function is_valid_input(
     action_space::Vector{ClosedInterval{Float64}}, a::Vector{Float64}
 )
-    # for i in eachindex(a)
-        # in((a[i] - 1e-6 * sign(a[i])), action_space[i]) || return false
-    # end
+    for i in eachindex(a)
+        in((a[i] - 1e-6 * sign(a[i])), action_space[i]) || return false
+    end
     return true
 end
