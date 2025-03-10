@@ -104,8 +104,6 @@ end
 
 
 function _psd(f::Real, alpha::Real, scale::Real)
-    if iszero(f)
-        return zero(Float64)
-    end
+    iszero(f) && return zero(Float64)
     return sqrt(scale) * (1 / f) ^ (alpha / 2)
 end

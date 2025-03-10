@@ -52,6 +52,50 @@ function _m_size(m::ModelFunction)
 end
 
 
+struct Simple1DSystem <: ModelFunction
+    delta_t::Float64
+    h_drifts::Matrix{Float64}
+    h_controls::Matrix{Float64}
+    b::Float64
+    sigma_b::Float64
+    _h_drift_epsiode::Matrix{Float64}
+end
+
+"""
+    Simple1DSystem(
+        delta_t::Real = 1.0, b::Real = 1.0, j_0::Real = 1.0, sigma_b::Real = 0.0
+    )
+"""
+function Simple1DSystem(
+    ; delta_t::Real = 1.0, b::Real = 1.0, j_0::Real = 1.0, sigma_b::Real = 0.0
+)
+    return Simple1DSystem(
+        delta_t,
+        0.5 .* [0 1; 1 0],
+        0.5 .* j_0 .* [1 0; 0 -1],
+        b,
+        sigma_b,
+        zeros(2, 2),
+    )
+end
+
+function reset!(m::Simple1DSystem, rng::AbstractRNG = default_rng())
+    m._h_drift_epsiode .= m.h_drifts .* (m.b + randn(rng) * m.sigma_b)
+    return nothing
+end
+
+function (m::Simple1DSystem)(epsilon_t::Vector{Float64})
+    return cis(
+        -Hermitian(
+            @. m.delta_t * (m._h_drift_epsiode + epsilon_t[1] * m.h_controls)
+        )
+    )
+end
+
+has_noise(m::Simple1DSystem) = !iszero(m.sigma_b)
+_m_size(::Simple1DSystem) = 2, 2
+
+
 struct QuantumDot2 <: ModelFunction
     delta_t::Float64
     h_drifts::Vector{Matrix{Float64}}

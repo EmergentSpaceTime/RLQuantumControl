@@ -30,6 +30,48 @@ function observation_space(
 end
 
 
+# struct FullObservationHistory <: ObservationFunction
+#     _previous_pulses::Vector{Float64}
+#     _t_step::Base.RefValue{Int}
+# end
+
+# """
+#     FullObservationHistory()
+
+# Full state observation including time-to-go, pulse, previous pulse, and
+# evolution operator.
+# """
+# function FullObservationHistory(n_controls::Int, n_previous::Int = 1)
+#     n_controls < 1 && throw(ArgumentError("`n_controls` must be >= 1."))
+#     n_previous < 1 && throw(ArgumentError("`n_previous` must be >= 1."))
+#     return FullObservationHistory(
+#         zeros(Float64, n_controls, n_previous), Base.RefValue(0)
+#     )
+# end
+
+# function (m::FullObservationHistory)(
+#     state::Vector{Float64}, ::AbstractRNG = default_rng()
+# )
+#     if iszero(state[1])
+#         _copy = copy(m._previous_pulses)
+#         m._previous_pulses .= zeros(Float64, length(m._previous_pulses))
+#         return vcat(state[1], _copy, state[2:end])
+#     end
+#     _copy = copy(m._previous_pulses)
+#     m._previous_pulses .= state[2 : 1 + length(m._previous_pulses)]
+#     return vcat(state[1], _copy, state[2:end])
+# end
+
+# function observation_space(
+#     m::FullObservationHistory, state_space::Vector{ClosedInterval{Float64}}
+# )
+#     return vcat(
+#         state_space[1],
+#         state_space[2 : 1 + length(m._previous_pulses)], state_space[2:end],
+#     )
+# end
+
+
 struct MinimalObservation <: ObservationFunction
     _observation_indices::Vector{Int}
 end

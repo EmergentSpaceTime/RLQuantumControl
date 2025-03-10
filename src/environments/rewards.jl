@@ -248,10 +248,10 @@ function (r::RobustGateFidelity)(
             u = Matrix{ComplexF64}(I, _m_size(r.model_function))
             for j in axes(r._pulse_history, 2)
                 u .= (
-                    u
-                    * r.model_function(
+                    r.model_function(
                         r.pulse_function(j, r._pulse_history[:, j])
                     )
+                    * u
                 )
             end
             if isa(r.observation_function, UnitaryTomography)
@@ -264,9 +264,9 @@ function (r::RobustGateFidelity)(
                 )
             end
             if isnothing(r.computational_indices)
-                rewards[i] = -log10(1 - gate_fidelity(u, r.target) + 1e-6)
+                rewards[i] = 1 - gate_fidelity(u, r.target) + 1e-6
             else
-                rewards[i] = -log10(
+                rewards[i] = (
                     1
                     - gate_fidelity(
                         u[r.computational_indices, r.computational_indices],
@@ -276,7 +276,7 @@ function (r::RobustGateFidelity)(
                 )
             end
         end
-        return mean(rewards)
+        return -log10(mean(rewards))
     end
     return zero(Float64)
 end

@@ -30,14 +30,13 @@ seed!(SEED)
 ######################
 # Input function.
 input_function = IdentityInput(
-    3; control_min=fill(-5.4, 3), control_max=fill(2.4, 3)
+    3; control_min=fill(exp(-5.4), 3), control_max=fill(exp(2.4), 3)
 )
 # Shaping function.
 if CONFIG["shaping"] == "none"
     shaping_function = IdentityShaping(3, CONFIG["inputs"])
 elseif CONFIG["shaping"] == "fir"
     response_data = readdlm("response_data_new.txt")
-    # response_data[:, 1] .-= 0.6
     response_data[:, 2] ./= (
         maximum(abs.(response_data[:, 2]))
         * CONFIG["srate"]
@@ -47,7 +46,7 @@ elseif CONFIG["shaping"] == "fir"
         3,
         CONFIG["inputs"],
         Spline1D(response_data[:, 1], response_data[:, 2]; bc="zero");
-        boundary_values=hcat(fill(-5.4, 3), fill(-5.4, 3)),
+        boundary_values=hcat(fill(exp(-5.4), 3), fill(exp(-5.4), 3)),
         boundary_padding=[5, 4],
         sampling_rate=CONFIG["srate"],
     )
@@ -88,7 +87,7 @@ model_function = QuantumDot2(
 )
 # Pulse function.
 if CONFIG["pulse"] == "none"
-    pulse_function = ExponentialPulse()
+    pulse_function = IdentityPulse()
 elseif CONFIG["pulse"] == "both"
     if CONFIG["reward"] != "robust"
         pulse_function = Chain(
@@ -110,17 +109,17 @@ elseif CONFIG["pulse"] == "both"
                 0.7,
                 1 / (2π * model_function.delta_t * 1e-9),
             ),
-            ExponentialPulse(),
+            IdentityPulse()
         )
     else
-        pulse_function = ExponentialPulse()
+        pulse_function = IdentityPulse()
     end
 end
 # Observation function.
 if CONFIG["observation"] == "full"
     observation_function = FullObservation()
 elseif CONFIG["observation"] == "previous"
-    observation_function = FullObservationPrevious(3)
+    observation_function = FullObservationPrevious()
 elseif CONFIG["observation"] == "noisy"
     if CONFIG["nmeasures"] == "nothing"
         observation_function = UnitaryTomography(
@@ -171,7 +170,7 @@ elseif CONFIG["reward"] == "robust"
                 0.7,
                 1 / (2π * model_function.delta_t * 1e-9),
             ),
-            ExponentialPulse(),
+            IdentityPulse(),
         ),
         (
             CONFIG["nmeasures"] == "nothing" ?

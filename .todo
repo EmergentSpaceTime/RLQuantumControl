@@ -1,1 +1,5 @@
 1) Robust reward with final noisy observation.
+
+
+1) Try extra pulse in observation
+2) Try without exponentiation (action space directly in J)

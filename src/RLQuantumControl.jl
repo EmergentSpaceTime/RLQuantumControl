@@ -4,11 +4,10 @@ module RLQuantumControl
     using Dierckx: Spline1D
     using Distributions: Multinomial
     using FFTW: irfft, rfft, rfftfreq
-    using Flux: AbstractDevice, AdamW, Chain, ClipNorm, Dense, Dropout,
-        Embedding, FluxCPUDevice, GRUv3Cell, LayerNorm, MultiHeadAttention,
-        OptimiserChain, Scale, cpu, f32, gelu, glorot_normal, ignore, normalise,
-        mse, params, relu, setup, unsqueeze, update!, withgradient, @layer,
-        _greek_ascii_depwarn, _size_check
+    using Flux: AdamW, Chain, ClipNorm, Dense, Dropout, Embedding, GRUv3Cell,
+        LayerNorm, MultiHeadAttention, OptimiserChain, Scale, cpu, f32, gelu,
+        glorot_normal, ignore, normalise, mse, params, relu, setup, unsqueeze,
+        update!, withgradient, @layer, _size_check
     using HDF5: close, create_dataset, h5open, write
     using IntervalSets: ClosedInterval, leftendpoint, rightendpoint
     using LinearAlgebra: Hermitian, I, diag, diagm, dot, eigvals, qr, svd
@@ -47,7 +46,7 @@ module RLQuantumControl
     export FilterShaping, IdentityShaping, ShapingFunction
     export ColouredNoiseInjection, ExponentialPulse, IdentityPulse,
         PulseFunction, StaticNoiseInjection, WhiteNoiseInjection
-    export ModelFunction, QuantumDot2
+    export ModelFunction, QuantumDot2, Simple1DSystem
     export ExactTomography, FullObservation, NormalisedObservation,
         MinimalObservation, ObservationFunction, UnitaryTomography
     export DenseGateFidelity, NormalisedReward, RewardFunction,

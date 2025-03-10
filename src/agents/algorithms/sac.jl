@@ -70,19 +70,16 @@ struct SACAgent{
     M <: ReplayBuffer,
     N <: SACNetworks,
     O <: AbstractVector,
-    D <: AbstractDevice,
-} <: Agent{M, N, O, D}
+} <: Agent{M, N, O}
     params::SACParameters
     memory::M
     networks::N
     opt_states::O
-    device::D
 end
 
 """
     SACAgent(
         env::QuantumControlEnvironment,
-        device::AbstractDevice = FluxCPUDevice(),
         rng::AbstractRNG = default_rng();
         kwargs...
     )
@@ -96,7 +93,6 @@ Args:
   * `env`: The environment that the agent learns. This just extracts relavant
         information from the environment such as the observation and action
         spaces.
-  * `device`: Device for neural networks (default: [`Flux.FluxCPUDevice()`]()).
   * `rng`: Random number generator (default: [`Random.default_rng()`]()).
 
 Kwargs:
@@ -110,11 +106,9 @@ Fields:
   * `memory`: Replay buffer with a history of transitions.
   * `networks`: Neural networks.
   * `opt_states`: Neural networks optimiser states.
-  * `device`: Device for neural networks.
 """
 function SACAgent(
     env::QuantumControlEnvironment,
-    device::AbstractDevice = FluxCPUDevice(),
     rng::AbstractRNG = default_rng();
     activation::Function = relu,
     init::Function = glorot_normal,
@@ -138,19 +132,17 @@ function SACAgent(
         kwargs...,
     )
     memory = ReplayBuffer(true, observation_dim, action_dim, params.capacity)
-    networks = device(
-        SACNetworks(
-            true,
-            observation_dim,
-            action_dim,
-            params.use_tqc ? params.n_q : 1,
-            params.hiddens,
-            params.dropout,
-            params.layer_norm;
-            activation=activation,
-            init=init,
-            rng=rng,
-        )
+    networks = SACNetworks(
+        true,
+        observation_dim,
+        action_dim,
+        params.use_tqc ? params.n_q : 1,
+        params.hiddens,
+        params.dropout,
+        params.layer_norm;
+        activation=activation,
+        init=init,
+        rng=rng,
     )
     opt_states = [
         setup(
@@ -167,7 +159,7 @@ function SACAgent(
             (4, networks.logα),
         ]
     ]
-    return SACAgent(params, memory, networks, opt_states, device)
+    return SACAgent(params, memory, networks, opt_states)
 end
 
 """
@@ -192,9 +184,7 @@ function get_action(
     observation::Vector{Float64},
     rng::AbstractRNG = default_rng(),
 )
-    μ, log_var_u = cpu(
-        agent.networks.policy_layers(agent.device(f32(observation)))
-    )
+    μ, log_var_u = agent.networks.policy_layers(f32(observation))
     log_var = @. (
         agent.params.log_var_min
         + (tanh(log_var_u) + 1)

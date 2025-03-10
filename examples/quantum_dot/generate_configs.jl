@@ -63,19 +63,20 @@ if !isone(length(ARGS))
 end
 
 base_config = Dict{String, Vector}(
-    "seed" => [1338, 24428, 322, 441, 555, 666, 1996, 1453],
-    "inputs" => [16],
+    "seed" => [24428, 555, 666, 1453],
+    "inputs" => [16, 46],
     "sigma" => [0.5],
     "mu" => [1.35],
+    "filteramp" => [1.80, 1.72, 1.62, 1.26],  # Amplitude scaling of filter.
     "shaping" => ["fir"],  # Kernel for shaping.
     "pulse" => ["both"],
-    "nepss" => [0.0, 1.0],  # "Fast" pulse noise.
-    "nepsf" => [0.0, 1.0],  # "Slow" pulse noise.
-    "ndrift" => [0.0, 1.0],  # Drift noise.
+    "nepss" => [1.0],  # "Fast" pulse noise.
+    "nepsf" => [1.0],  # "Slow" pulse noise.
+    "ndrift" => [1.0],  # Drift noise.
     "reward" => ["robust"],  # Reward type.
-    "normalreward" => ["true", "false"],  # Normalise reward.
-    "observation" => ["full"],  # Observation type.
-    "normalobs" => ["true", "false"],  # Normalise observation.
+    "normalreward" => ["false"],  # Normalise reward.
+    "observation" => ["full", "previous"],  # Observation type.
+    "normalobs" => ["false"],  # Normalise observation.
     "plength" => [20],  # Protocol length.
     "srate" => [10],  # Oversampling rate.
     "nmeasures" => ["nothing"],  # Number of measurements.
