@@ -5,7 +5,8 @@ println(get_num_threads(), Base.Threads.nthreads())
 
 using Random: seed!
 using Dierckx: Spline1D
-using Flux: relu, glorot_uniform
+using Distributions: pdf, SkewNormal
+using Flux: relu, gelu, glorot_uniform, glorot_normal
 
 using DelimitedFiles: readdlm
 using TOML: parsefile
@@ -51,21 +52,14 @@ elseif CONFIG["shaping"] == "fir"
         sampling_rate=CONFIG["srate"],
     )
 elseif CONFIG["shaping"] == "gauss"
-    mu = CONFIG["mu"]
-    sigma = CONFIG["sigma"]
-    scale = 0.071 / CONFIG["srate"] * 10
+    TDKM = 0:0.01:10
+    YDKM = pdf(SkewNormal(CONFIG["mu"], CONFIG["sigma"], CONFIG["skew"]), TDKM)
+    YDKM ./= maximum(abs.(YDKM)) * CONFIG["srate"] * CONFIG["gaussamp"]
     shaping_function = FilterShaping(
         3,
         CONFIG["inputs"],
-        Spline1D(
-            -5:0.1:5,
-            @. (
-                scale * exp(-0.5 * (((-5:0.1:5) - mu) / sigma) ^ 2)
-                / (sigma * sqrt(2π))
-            );
-            bc="zero",
-        );
-        boundary_values=hcat(fill(-5.4, 3), fill(-5.4, 3)),
+        Spline1D(TDKM, YDKM; bc="zero");
+        boundary_values=hcat(fill(exp(-5.4), 3), fill(exp(-5.4), 3)),
         boundary_padding=[5, 4],
         sampling_rate=CONFIG["srate"],
     )
@@ -118,8 +112,6 @@ end
 # Observation function.
 if CONFIG["observation"] == "full"
     observation_function = FullObservation()
-elseif CONFIG["observation"] == "previous"
-    observation_function = FullObservationPrevious()
 elseif CONFIG["observation"] == "noisy"
     if CONFIG["nmeasures"] == "nothing"
         observation_function = UnitaryTomography(
@@ -195,23 +187,23 @@ env = QuantumControlEnvironment(
 )
 agent = SACAgent(
     env;
-    activation=relu,
-    init=glorot_uniform,
+    activation=CONFIG["activaton"] == "relu" ? relu : gelu,
+    init=CONFIG["init"] == "glu" ? glorot_uniform : glorot_normal,
     capacity=100000,
     hiddens=[512, 512],
     log_var_min=-15,
-    log_var_max=4,
-    use_tqc=true,
+    log_var_max=CONFIG["logvarmax"],
+    use_tqc=CONFIG["tqc"],
     n_q=25,
     k_q=46,
-    dropout=0.01,
-    layer_norm=true,
+    dropout=CONFIG["dropout"],
+    layer_norm=CONFIG["layernorm"],
     gamma=0.99,
     minibatch_size=256,
     training_steps=20,
     decays=[0.0, 0.0, 0.0, 0.0],
     clips=[5.0, 5.0, 5.0, 5.0],
-    eta=[5e-4, 5e-4, 5e-4, 5e-4],
+    eta=CONFIG["lr"] .* ones(4),
     rho=0.005,
     warmup_normalisation_episodes=150,
     warmup_evaluation_episodes=150,

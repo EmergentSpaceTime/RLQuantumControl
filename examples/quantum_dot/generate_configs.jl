@@ -63,11 +63,15 @@ if !isone(length(ARGS))
 end
 
 base_config = Dict{String, Vector}(
+    # Seed.
     "seed" => [24428, 555, 666, 1453],
-    "inputs" => [16, 46],
-    "sigma" => [0.5],
-    "mu" => [1.35],
-    "filteramp" => [1.80, 1.72, 1.62, 1.26],  # Amplitude scaling of filter.
+    # Environment.
+    "inputs" => [46],
+    "mu" => [1.013],
+    "sigma" => [0.6404],
+    "skew" => [0.854],  # Skewness of shaping.
+    "gaussamp" => [3.0607],  # Amplitude scaling of Gaussian.
+    "filteramp" => [1.80],  # Amplitude scaling of filter.
     "shaping" => ["fir"],  # Kernel for shaping.
     "pulse" => ["both"],
     "nepss" => [1.0],  # "Fast" pulse noise.
@@ -75,12 +79,21 @@ base_config = Dict{String, Vector}(
     "ndrift" => [1.0],  # Drift noise.
     "reward" => ["robust"],  # Reward type.
     "normalreward" => ["false"],  # Normalise reward.
-    "observation" => ["full", "previous"],  # Observation type.
+    "observation" => ["full"],  # Observation type.
     "normalobs" => ["false"],  # Normalise observation.
     "plength" => [20],  # Protocol length.
     "srate" => [10],  # Oversampling rate.
     "nmeasures" => ["nothing"],  # Number of measurements.
-    "save_directory" => ["results"],  # Dummy.
+    # Agent.
+    "init" => ["glu"],  # Initialisation.
+    "activation" => ["relu"],  # Activation.
+    "tqc" => [true],  # TQC.
+    "layernorm" => [true],  # Layer norm.
+    "dropout" => [0.01],  # Dropout.
+    "logvarmax" => [4],  # Log variance max.
+    "lr" => [5e-4], # Learning rate.
+    # Dummy.
+    "save_directory" => ["results"],
 )
 base_params = String[]
 generate_configs(ARGS[1], base_config, base_params)
