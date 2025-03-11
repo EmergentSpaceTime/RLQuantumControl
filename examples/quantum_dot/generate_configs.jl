@@ -78,20 +78,20 @@ base_config = Dict{String, Vector}(
     "nepsf" => [1.0],  # "Slow" pulse noise.
     "ndrift" => [1.0],  # Drift noise.
     "reward" => ["robust"],  # Reward type.
-    "normalreward" => ["false"],  # Normalise reward.
+    "normalreward" => [false],  # Normalise reward.
     "observation" => ["full"],  # Observation type.
-    "normalobs" => ["false"],  # Normalise observation.
+    "normalobs" => [false],  # Normalise observation.
     "plength" => [20],  # Protocol length.
     "srate" => [10],  # Oversampling rate.
     "nmeasures" => ["nothing"],  # Number of measurements.
     # Agent.
-    "init" => ["glu"],  # Initialisation.
-    "activation" => ["relu"],  # Activation.
-    "tqc" => [true],  # TQC.
-    "layernorm" => [true],  # Layer norm.
+    "init" => ["glu", "gln"],  # Initialisation.
+    "activation" => ["relu", "gelu"],  # Activation.
+    "tqc" => [true, false],  # TQC.
+    "layernorm" => [true, false],  # Layer norm.
     "dropout" => [0.01],  # Dropout.
-    "logvarmax" => [4],  # Log variance max.
-    "lr" => [5e-4], # Learning rate.
+    "logvarmax" => [4, 5],  # Log variance max.
+    "lr" => [3e-4, 5e-4], # Learning rate.
     # Dummy.
     "save_directory" => ["results"],
 )

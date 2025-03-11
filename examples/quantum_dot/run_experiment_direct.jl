@@ -187,7 +187,7 @@ env = QuantumControlEnvironment(
 )
 agent = SACAgent(
     env;
-    activation=CONFIG["activaton"] == "relu" ? relu : gelu,
+    activation=CONFIG["activation"] == "relu" ? relu : gelu,
     init=CONFIG["init"] == "glu" ? glorot_uniform : glorot_normal,
     capacity=100000,
     hiddens=[512, 512],
