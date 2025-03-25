@@ -3,14 +3,12 @@ using LinearAlgebra.BLAS: get_num_threads, set_num_threads
 set_num_threads(Base.Threads.nthreads())
 println(get_num_threads(), Base.Threads.nthreads())
 
-using Random: seed!
-
-using TOML: parsefile
 using BSON: @save, @load
 using HDF5: h5open, create_dataset, write, close
+using Random: seed!
+using TOML: parsefile
 
-include("../../src/RLQuantumControl.jl")
-using .RLQuantumControl
+using RLQuantumControl
 
 #################
 # Setup config. #
