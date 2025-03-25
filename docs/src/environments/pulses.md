@@ -16,6 +16,10 @@ ExponentialPulse
 ```
 
 ```@docs
+LogarithmPulse
+```
+
+```@docs
 StaticNoiseInjection
 ```
 

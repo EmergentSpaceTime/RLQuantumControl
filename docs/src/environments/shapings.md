@@ -14,3 +14,7 @@ IdentityShaping
 ```@docs
 FilterShaping
 ```
+
+```@docs
+ExponentialShaping
+```

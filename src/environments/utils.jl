@@ -29,11 +29,28 @@ is_unitary(u::AbstractMatrix) = isapprox(u * u', Matrix{eltype(u)}(I, size(u)))
 
 
 """
+    closest_unitary(u::AbstractMatrix)
+
+Finds the closest unitary matrix to the given matrix `u` using SVD.
+
+Args:
+  * `u`: Matrix to be approximated.
+
+Returns:
+  * `Matrix{ComplexF64}`: The closest unitary matrix to `u`.
+"""
+function closest_unitary(u::AbstractMatrix)
+    v, _, w = svd(u)
+    return v * w'
+end
+
+
+"""
     gate_fidelity(u::AbstractMatrix, v::AbstractMatrix)
 
 Calculates the (unsquared) fidelity of two unitary gates:
 ```math
-    \\mathscr{F}(U, V) = \\left|\\frac{\\text{tr}(U^{\\dagger}V)}{N}\\right|
+    \\mathscr{F}(U, V) = \\left|\\frac{\\text{tr}(U^{\\dagger}V)}{N}\\right|^{2}
 ```
 
 Args:
@@ -48,7 +65,7 @@ function gate_fidelity(u::AbstractMatrix, v::AbstractMatrix)
     @simd for e in eachindex(v)
         @inbounds sum_of_elements += conj(u[e]) * v[e]
     end
-    return abs(sum_of_elements / size(u, 1))
+    return abs2(sum_of_elements / size(u, 1))
 end
 
 
@@ -93,6 +110,7 @@ function power_noise(
     rng::AbstractRNG = default_rng();
     normalise::Bool = false,
 )
+    iszero(alpha) && @warn "For Gaussian noise, it is simpler to use `randn`."
     g_noise = rfft(randn(rng, k, n), 2)
     f_powers = unsqueeze(
         _psd.(rfftfreq(n, f_s), alpha, scale * (f_s / 2)); dims=1

@@ -13,10 +13,11 @@ module RLQuantumControl
     using LinearAlgebra: Hermitian, I, diag, diagm, dot, eigvals, qr, svd
     using NNlib: make_causal_mask
     using Random: AbstractRNG, default_rng
-    using StatsBase: mean, sample
+    using Statistics: mean
+    using StatsBase: sample
 
 
-    # Environment files
+    # Environment files.
     include("environments/utils.jl")
     include("environments/inputs.jl")
     include("environments/shapings.jl")
@@ -26,7 +27,7 @@ module RLQuantumControl
     include("environments/rewards.jl")
     include("environments/environment.jl")
 
-    # Agent files
+    # Agent files.
     include("agents/networks/ln.jl")
     include("agents/networks/gpt.jl")
     include("agents/networks/base.jl")
@@ -36,16 +37,16 @@ module RLQuantumControl
     include("agents/algorithms/agent.jl")
     include("agents/algorithms/sac.jl")
 
-    # Re-export some used functions
+    # Re-export some used functions.
     export I, Spline1D
     export Chain
 
-    # Environment exports
-    export gate_fidelity, is_unitary, power_noise, rand_unitary
+    # Environment exports.
+    export closest_unitary, gate_fidelity, is_unitary, power_noise, rand_unitary
     export IdentityInput, InputFunction, StepInput, is_valid_input
-    export FilterShaping, IdentityShaping, ShapingFunction
+    export ExponentialShaping, FilterShaping, IdentityShaping, ShapingFunction
     export ColouredNoiseInjection, ExponentialPulse, IdentityPulse,
-        PulseFunction, StaticNoiseInjection, WhiteNoiseInjection
+        LogarithmPulse, PulseFunction, StaticNoiseInjection, WhiteNoiseInjection
     export ModelFunction, QuantumDot2, Simple1DSystem
     export ExactTomography, FullObservation, NormalisedObservation,
         MinimalObservation, ObservationFunction, UnitaryTomography
@@ -54,7 +55,7 @@ module RLQuantumControl
     export QuantumControlEnvironment, step!
     export reset!
 
-    # Agent exports
+    # Agent exports.
     # export CustomLayerNorm, GPT
     export Memory, ReplayBuffer
     export Agent, SACAgent, SACNetworks, SACParameters, evaluation_steps!,

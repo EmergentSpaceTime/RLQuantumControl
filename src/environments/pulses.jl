@@ -41,6 +41,19 @@ struct ExponentialPulse <: PulseFunction end
 (::ExponentialPulse)(::Int, epsilon_t::Vector{Float64}) = exp.(epsilon_t)
 
 
+"""
+    LogarithmPulse()
+
+Logarithm pulse function.
+```math
+    \\mathscr{P}(t, \\epsilon_{t}) = \\log{(\\epsilon_{t})}
+```
+"""
+struct LogarithmPulse <: PulseFunction end
+
+(::LogarithmPulse)(::Int, epsilon_t::Vector{Float64}) = log.(epsilon_t)
+
+
 struct StaticNoiseInjection <: PulseFunction
     sigma::Float64
     _noise_episode::Vector{Float64}
@@ -49,7 +62,7 @@ end
 """
     StaticNoiseInjection(n_controls::Int, sigma::Real)
 
-Callable that injects an episodic Gaussian noise to the pulse:
+Callable that injects an episodic (slow) Gaussian noise to the pulse:
 
 ```math
     \\mathscr{P}(t, \\epsilon_{t}) = \\epsilon_{t} + \\delta
@@ -68,7 +81,7 @@ Fields:
 """
 function StaticNoiseInjection(n_controls::Int, sigma::Real)
     n_controls < 1 && throw(ArgumentError("`n_controls` must be >= 1."))
-    sigma < 0 && throw(ArgumentError("`sigma` must be >= 0."))
+    sigma < 0 && throw(ArgumentError("`sigma` must be > 0."))
     return StaticNoiseInjection(sigma, zeros(n_controls))
 end
 
@@ -134,14 +147,16 @@ _n_ts(n::WhiteNoiseInjection) = size(n._noises_episode, 2)
 
 
 struct ColouredNoiseInjection <: PulseFunction
-    s_0::Float64
     alpha::Float64
     f_s::Float64
+    s_0::Float64
     _noises_episode::Matrix{Float64}
 end
 
 """
-    ColouredNoiseInjection(n_controls::Int, n_ts::Int, s_0::Real, alpha::Real)
+    ColouredNoiseInjection(
+        n_controls::Int, n_ts::Int, alpha::Real, f_s::Real, s_0::Real = 1.0
+    )
 
 Callable that generates time-correlated noise on each time step of the incoming
 pulse:
@@ -160,17 +175,17 @@ Args:
   * `n_controls`: Number of controls.
   * `n_ts`: Number of total time steps (including extra time steps if shaping
         includes oversampling).
-  * `s_0`: Noise power constant.
   * `alpha`: Noise power exponent.
-  * `f_s`: Sampling frequency.
+  * `f_s`: Sampling frequency (with units).
+  * `s_0`: Noise power constant (default: `1.0`).
 
 Fields:
-  * `s_0`: Noise power constant.
   * `alpha`: Noise power exponent.
   * `f_s`: Sampling frequency.
+  * `s_0`: Noise power constant.
 """
 function ColouredNoiseInjection(
-    n_controls::Int, n_ts::Int, s_0::Real, alpha::Real, f_s::Real
+    n_controls::Int, n_ts::Int, alpha::Real, f_s::Real, s_0::Real = 1.0
 )
     n_controls < 1 && throw(ArgumentError("`n_controls` must be >= 1."))
     n_ts < 1 && throw(ArgumentError("`n_ts` must be >= 1."))
@@ -182,7 +197,7 @@ function ColouredNoiseInjection(
             )
         )
     end
-    return ColouredNoiseInjection(s_0, alpha, f_s, zeros(n_controls, n_ts))
+    return ColouredNoiseInjection(alpha, f_s, s_0, zeros(n_controls, n_ts))
 end
 
 function (n::ColouredNoiseInjection)(t_step::Int, epsilon_t::Vector{Float64})

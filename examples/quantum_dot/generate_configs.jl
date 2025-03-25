@@ -63,35 +63,44 @@ if !isone(length(ARGS))
 end
 
 base_config = Dict{String, Vector}(
-    # Seed.
+    ### Seed. ###
     "seed" => [24428, 555, 666, 1453],
-    # Environment.
+    ### Environment. ###
     "inputs" => [46],
+    # Filter related.
     "mu" => [1.013],
     "sigma" => [0.6404],
     "skew" => [0.854],  # Skewness of shaping.
     "gaussamp" => [3.0607],  # Amplitude scaling of Gaussian.
     "filteramp" => [1.80],  # Amplitude scaling of filter.
     "shaping" => ["fir"],  # Kernel for shaping.
+    "srate" => [10],  # Oversampling rate.
+    # Pulse and noise related.
     "pulse" => ["both"],
-    "nepss" => [1.0],  # "Fast" pulse noise.
-    "nepsf" => [1.0],  # "Slow" pulse noise.
-    "ndrift" => [1.0],  # Drift noise.
+    "directp" => [false],  # Direct pulse.
+    "nepss" => [0.0, 1.0],  # "Fast" pulse noise.
+    "nepsf" => [0.0],  # "Slow" pulse noise.
+    # Model related.
+    "model" => ["qd1", "qd2"],  # Model type.
+    "plength" => [20],  # Protocol length.
+    "ndrift" => [0.0, 1.0],  # Drift noise.
+    # Reward related.
     "reward" => ["robust"],  # Reward type.
     "normalreward" => [false],  # Normalise reward.
+    "mapunitary" => [true, false],  # Map to unitary.
+    "nruns" => [100],  # Number of runs for robust reward.
+    # Observation related.
     "observation" => ["full"],  # Observation type.
     "normalobs" => [false],  # Normalise observation.
-    "plength" => [20],  # Protocol length.
-    "srate" => [10],  # Oversampling rate.
     "nmeasures" => ["nothing"],  # Number of measurements.
-    # Agent.
-    "init" => ["glu", "gln"],  # Initialisation.
-    "activation" => ["relu", "gelu"],  # Activation.
-    "tqc" => [true, false],  # TQC.
-    "layernorm" => [true, false],  # Layer norm.
+    ### Agent. ###
+    "init" => ["gln"],  # Initialisation.
+    "activation" => ["relu"],  # Activation.
+    "tqc" => [true],  # TQC.
+    "layernorm" => [true],  # Layer norm.
     "dropout" => [0.01],  # Dropout.
-    "logvarmax" => [4, 5],  # Log variance max.
-    "lr" => [3e-4, 5e-4], # Learning rate.
+    "logvarmax" => [4],  # Log variance max.
+    "lr" => [5e-4], # Learning rate.
     # Dummy.
     "save_directory" => ["results"],
 )

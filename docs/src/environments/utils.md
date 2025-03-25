@@ -11,6 +11,10 @@ is_unitary
 ```
 
 ```@docs
+closest_unitary
+```
+
+```@docs
 rand_unitary
 ```
 

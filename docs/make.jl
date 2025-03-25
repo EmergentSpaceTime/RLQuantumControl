@@ -1,5 +1,5 @@
-using Documenter
-using DocumenterCitations
+using Documenter: HTML, MathJax3, makedocs
+using DocumenterCitations: CitationBibliography
 
 using RLQuantumControl
 
@@ -29,7 +29,7 @@ makedocs(
             "Utility Functions" => "environments/utils.md",
         ],
     ],
-    format=Documenter.HTML(
+    format=HTML(
         ;
         mathengine=MathJax3(
             Dict(
@@ -44,5 +44,5 @@ makedocs(
         collapselevel=1,
         sidebar_sitename=true,
         ansicolor=true,
-    )
+    ),
 )

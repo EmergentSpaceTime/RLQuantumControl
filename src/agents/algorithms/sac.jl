@@ -117,10 +117,18 @@ function SACAgent(
     observation_dim = length(env.observation_space)
     action_dim = length(env.action_space)
     action_scale = @. (
-        (rightendpoint(env.action_space) - leftendpoint(env.action_space)) / 2
+        (
+            (rightendpoint(env.action_space) - 1e-6)
+            - (leftendpoint(env.action_space) + 1e-6)
+        )
+        / 2
     )
     action_bias = @. (
-        (rightendpoint(env.action_space) + leftendpoint(env.action_space)) / 2
+        (
+            (rightendpoint(env.action_space) - 1e-6) +
+            (leftendpoint(env.action_space) + 1e-6)
+        )
+        / 2
     )
     H_bar = -action_dim
 

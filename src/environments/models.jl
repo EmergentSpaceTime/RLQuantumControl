@@ -1,15 +1,15 @@
 #################
 # Natural Units #
 #################
-# 1 / ns = 6.582119569e-7 eV
-# 1mT = 0.087953 GHz
+# 1 / ns = 6.582119569e-7 eV.
+# 1mT = 0.087953 GHz.
 
 """Abstract callable struct that creates an evolution operator (e.g. unitary
-from Hamiltonian) from an inputted pulse (at the that time step). Models may
-have an optional [`reset!`]() method that sets an initial state for the model
-(i.e. the cases where the model contains random noise or parameters which can
-differ episode to episode), and a [`has_noise`]() method outputting a `Bool` if
-the dynamics contains noise.
+from Hamiltonian) from an inputted pulse (at that time step). Models may have an
+optional [`reset!`]() method that sets an initial state for the model (i.e. the
+cases where the model contains random noise or parameters which can differ
+episode to episode), and a [`has_noise`]() method outputting a `Bool` if the
+dynamics contains noise on the drift tterms.
 
 These callables have the argument signature:
 ```math
@@ -22,93 +22,126 @@ reset!(::ModelFunction, ::AbstractRNG = default_rng()) = nothing
 has_noise(::ModelFunction) = false
 
 function _n_ctrls(m::ModelFunction)
-    if hasfield(typeof(m), :h_controls)
-        if m.h_controls isa Matrix
+    if hasfield(typeof(m), :h_control)
+        if m.h_control isa Matrix
             return 1
-        elseif m.h_controls isa Vector
-            return length(m.h_controls)
+        elseif m.h_control isa Vector
+            return length(m.h_control)
         end
     end
     throw(
         ErrorException(
-            "Model doesn't have defined control fields, `h_controls`."
+            "Model doesn't have defined control fields, `h_control`."
         )
     )
 end
 
 function _m_size(m::ModelFunction)
-    if hasfield(typeof(m), :h_drifts)
-        if m.h_drifts isa Matrix
-            return size(m.h_drifts)
-        elseif m.h_drifts isa Vector
-            return size(m.h_drifts[1])
+    if hasfield(typeof(m), :h_drift)
+        if m.h_drift isa Matrix
+            return size(m.h_drift)
+        elseif m.h_drift isa Vector
+            return size(m.h_drift[1])
         end
     end
     throw(
         ErrorException(
-            "Model doesn't have defined drift Hamiltonian fields, `h_drifts`."
+            "Model doesn't have defined drift Hamiltonian fields, `h_drift`."
         )
     )
 end
 
 
 struct Simple1DSystem <: ModelFunction
+    h_drift::Matrix{Float64}
+    h_control::Matrix{Float64}
     delta_t::Float64
-    h_drifts::Matrix{Float64}
-    h_controls::Matrix{Float64}
-    b::Float64
-    sigma_b::Float64
+    _sigma_bb::Float64
     _h_drift_epsiode::Matrix{Float64}
 end
 
 """
     Simple1DSystem(
-        delta_t::Real = 1.0, b::Real = 1.0, j_0::Real = 1.0, sigma_b::Real = 0.0
+        delta_t::Real; j_0::Real = 1.0, b::Real = 1.0, sigma_b::Real = 0.0
     )
+
+One-qubit quantum dot model with one control and a Schrödinger evolution. Units
+are in angular frequncies (``\\text{ns}^{-1}``) unless specified otherwise:
+
+```math
+    \\mathscr{M}(\\epsilon_{t}) = U_{t} = {%
+        \\exp\\left(-i\\delta tH(\\epsilon_{t})\\right)
+    }
+```
+Where:
+```math
+    H(\\epsilon_{t}) = b\\sigma^{x} + \\epsilon_{t}\\sigma^{z}
+```
+
+Args:
+  * `delta_t`: Integration time step in ns (note to take into account any
+        oversampling of the pulse).
+
+Kwargs:
+  * `j_0`: Unit parameter for tilt-control (default: `1.0`).
+  * `b`: Magnetic field gradient (default: `1.0`).
+  * `sigma_b`: Standard deviation of the slow (episodic) hyperfine noise on the
+        magnetic field gradient (default: `0.0`).
+
+Fields:
+  * `h_drift`: Drift components of Hamiltonian.
+  * `h_control`: Control components of Hamiltonian.
+  * `delta_t`: Integration time step.
 """
 function Simple1DSystem(
-    ; delta_t::Real = 1.0, b::Real = 1.0, j_0::Real = 1.0, sigma_b::Real = 0.0
+    delta_t::Real; j_0::Real = 1.0, b::Real = 1.0, sigma_b::Real = 0.0
 )
+    if delta_t <= zero(delta_t)
+        throw(ArgumentError("`delta_t` must be positive."))
+    end
+    b <= zero(b) && throw(ArgumentError("`b` must be positive."))
+    j_0 <= zero(j_0) && throw(ArgumentError("`j_0` must be positive."))
+    if sigma_b < zero(sigma_b)
+        throw(ArgumentError("`sigma_b` must be non-negative."))
+    end
     return Simple1DSystem(
+        (0.5 * b) .* [0 1; 1 0],
+        (0.5 * j_0) .* [1 0; 0 -1],
         delta_t,
-        0.5 .* [0 1; 1 0],
-        0.5 .* j_0 .* [1 0; 0 -1],
-        b,
-        sigma_b,
+        sigma_b / b,
         zeros(2, 2),
     )
-end
-
-function reset!(m::Simple1DSystem, rng::AbstractRNG = default_rng())
-    m._h_drift_epsiode .= m.h_drifts .* (m.b + randn(rng) * m.sigma_b)
-    return nothing
 end
 
 function (m::Simple1DSystem)(epsilon_t::Vector{Float64})
     return cis(
         -Hermitian(
-            @. m.delta_t * (m._h_drift_epsiode + epsilon_t[1] * m.h_controls)
+            @. m.delta_t * (m._h_drift_epsiode + epsilon_t[1] * m.h_control)
         )
     )
 end
 
-has_noise(m::Simple1DSystem) = !iszero(m.sigma_b)
+function reset!(m::Simple1DSystem, rng::AbstractRNG = default_rng())
+    m._h_drift_epsiode .= m.h_drift .* (1 + randn(rng) * m._sigma_bb)
+    return nothing
+end
+
+has_noise(m::Simple1DSystem) = !iszero(m._sigma_bb)
 _m_size(::Simple1DSystem) = 2, 2
 
 
 struct QuantumDot2 <: ModelFunction
-    delta_t::Float64
-    h_drifts::Vector{Matrix{Float64}}
-    h_controls::Vector{Matrix{Float64}}
+    h_drift::Vector{Matrix{Float64}}
+    h_control::Vector{Matrix{Float64}}
     h_coupling::Matrix{Float64}
+    delta_t::Float64
     _sigma_bb::Vector{Float64}
     _h_drift_episode::Matrix{Float64}
 end
 
 """
     QuantumDot2(
-        ;
-        delta_t::Real = 1.0,
+        delta_t::Real;
         b_ij::Vector{<:Real} = [1.0, 7.0, -1.0],
         j_0::Real = 1.0,
         epsilon_0::Real = 0.272,
@@ -118,11 +151,12 @@ end
 
 Two-qubit double quantum dot model with three controls
 [PhysRevB.101.155311](@cite) and a Schrödinger evolution. Two spins corresponds
-to one logical qubit. Units are in GHz unless specified otherwise.
+to one logical qubit. Units are in angular frequncies (\\ns^{-1}) unless
+specified otherwise.
 
 ```math
     \\mathscr{M}(\\epsilon_{t}) = U_{t} = {%
-        \\exp\\left(-i\\Delta tH(\\epsilon_{t})\\right)
+        \\exp\\left(-i\\delta tH(\\epsilon_{t})\\right)
     }
 ```
 Where:
@@ -148,15 +182,18 @@ Where:
                 }
             }{4}
             \\bar{\\sigma}^{(i)}\\cdot\\bar{\\sigma}^{(i + 1)}
-        }
+        }\\\\
+        &+ H_{\\text{coupling}}
     \\end{aligned}
 ```
 In addition one can add a quasi-static (slow) noise that peturbs the magnetic
 field gradients as well as a empirical coupling term.
 
+Args:
+  * `delta_t`: Integration time step in ns (note to take into account any
+        oversampling of the pulse).
+
 Kwargs:
-  * `delta_t`: Time step in ns. Note that if pulse is oversampled and shaped,
-        use the sub-time step (default: `1.0`).
   * `b_ij`: Magnetic field gradients between i-j qubits (default:
         `[1.0, 7.0, -1.0]`).
   * `j_0`: Unit parameter for tilt-control (default: `1.0`).
@@ -168,12 +205,12 @@ Kwargs:
 
 Fields:
   * `h_drift`: Drift components of Hamiltonian.
-  * `h_controls`: Control components of Hamiltonian.
+  * `h_control`: Control components of Hamiltonian.
   * `h_coupling`: Coupling component of Hamiltonian.
+  * `delta_t`: Integration time step.
 """
 function QuantumDot2(
-    ;
-    delta_t::Real = 1.0,
+    delta_t::Real = 1.0;
     b_ij::Vector{<:Real} = [1.0, 7.0, -1.0],
     j_0::Real = 1.0,
     epsilon_0::Real = 0.272,
@@ -189,10 +226,10 @@ function QuantumDot2(
     iszero(epsilon_0) && throw(ArgumentError("`epsilon_0` must be non-zero."))
     j_0 < zero(j_0) && throw(ArgumentError("`j_0` must be positive."))
     return QuantumDot2(
-        delta_t,
-        b_ij .* _get_h_drift_terms_qdot_2(),
+        _get_h_drift_terms_qdot_2(),
         j_0 .* _get_H_control_terms_qdot_2(),
         _get_h_coupling_term_qdot_2(j_0, epsilon_0, e_coupling),
+        delta_t,
         iszero(sigma_b) ? [] : fill(sigma_b, 3) ./ b_ij,
         zeros(6, 6),
     )
@@ -203,9 +240,9 @@ function (m::QuantumDot2)(epsilon_t::Vector{Float64})
         -Hermitian(
             @. m.delta_t * (
                 m._h_drift_episode
-                + epsilon_t[1] * m.h_controls[1]
-                + epsilon_t[2] * m.h_controls[2]
-                + epsilon_t[3] * m.h_controls[3]
+                + epsilon_t[1] * m.h_control[1]
+                + epsilon_t[2] * m.h_control[2]
+                + epsilon_t[3] * m.h_control[3]
                 + epsilon_t[1] * epsilon_t[3] * m.h_coupling
             )
         )
@@ -214,10 +251,10 @@ end
 
 function reset!(m::QuantumDot2, rng::AbstractRNG = default_rng())
     if isempty(m._sigma_bb)
-        m._h_drift_episode .= sum(m.h_drifts)
+        m._h_drift_episode .= sum(m.h_drift)
     else
         @. m._h_drift_episode = $sum(
-            m.h_drifts * (1 + $randn(rng, 3) * m._sigma_bb)
+            m.h_drift * (1 + $randn(rng, 3) * m._sigma_bb)
         )
     end
     return nothing

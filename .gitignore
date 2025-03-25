@@ -1,6 +1,9 @@
 .vscode
+benchmarks/Manifest.toml
+docs/Manifest.toml
 docs/build
 misc/
+examples/Manifest.toml
 examples/quantum_dot/configs
 examples/quantum_dot/data
 examples/quantum_dot/figures

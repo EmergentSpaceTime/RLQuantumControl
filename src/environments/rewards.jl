@@ -14,6 +14,7 @@ struct DenseGateFidelity{
 } <: RewardFunction
     target::Matrix{ComplexF64}
     computational_indices::I
+    map_to_closest_unitary::Bool
     _r_tm1::Base.RefValue{Float64}
 end
 
@@ -21,6 +22,7 @@ end
     DenseGateFidelity(
         target::Matrix,
         computational_indices::Union{Nothing, AbstractVector{Int}} = nothing,
+        map_to_closest_unitary::Bool = false,
     )
 
 Callable to generate a gate fidelity reward function that is defined as:
@@ -36,18 +38,26 @@ Args:
   * `target`: Target unitary matrix.
   * `computational_indices`: Computational subspace to calculate the fidelity.
         If `nothing`, the full matrix is used (default: `nothing`).
+  * `map_to_closest_unitary`: If `true`, the input matrix is mapped to the
+        closest unitary matrix (default: `false`).
 
 Fields:
   * `target`: Target unitary matrix.
   * `computational_indices`: Computational subspace.
+  * `map_to_closest_unitary`: Whether to map final matrix to the closest
+        unitary.
 """
 function DenseGateFidelity(
     target::Matrix,
     computational_indices::Union{Nothing, AbstractVector{Int}} = nothing,
+    map_to_closest_unitary::Bool = false,
 )
     is_unitary(target) || throw(ArgumentError("Target matrix must be unitary!"))
     return DenseGateFidelity(
-        target, computational_indices, Base.RefValue(zero(Float64))
+        target,
+        computational_indices,
+        map_to_closest_unitary,
+        Base.RefValue(zero(Float64)),
     )
 end
 
@@ -55,12 +65,25 @@ function (r::DenseGateFidelity)(
     u::AbstractMatrix{ComplexF64}, done::Bool, ::AbstractRNG = default_rng()
 )
     if isnothing(r.computational_indices)
-        nlif = -log10(1 - gate_fidelity(u, r.target) + 1e-6)
+        nlif = -log10(
+            1
+            - gate_fidelity(
+                r.map_to_closest_unitary ? closest_unitary(u) : u, r.target
+            )
+            + 1e-6
+        )
     else
         nlif = -log10(
             1
             - gate_fidelity(
-                u[r.computational_indices, r.computational_indices], r.target
+                (
+                    r.map_to_closest_unitary
+                    ? closest_unitary(
+                        u[r.computational_indices, r.computational_indices]
+                    )
+                    : u[r.computational_indices, r.computational_indices]
+                ),
+                r.target,
             )
             + 1e-6
         )
@@ -81,12 +104,14 @@ struct SparseGateFidelity{
 } <: RewardFunction
     target::Matrix{ComplexF64}
     computational_indices::I
+    map_to_closest_unitary::Bool
 end
 
 """
-    function SparseGateFidelity(
+    SparseGateFidelity(
         target::Matrix,
         computational_indices::Union{Nothing, AbstractVector{Int}} = nothing,
+        map_to_closest_unitary::Bool = false,
     )
 
 Constructs a fidelity reward function that is defined as:
@@ -106,18 +131,23 @@ Args:
   * `target`: Target unitary matrix.
   * `computational_indices`: Computational subspace to calculate the fidelity.
         If `nothing`, the full matrix is used (default: `nothing`).
+  * `map_to_closest_unitary`: If `true`, the input matrix is mapped to the
+        closest unitary matrix (default: `false`).
 
 Fields:
   * `target`: Target unitary matrix.
   * `computational_indices`: Computational subspace.
+  * `map_to_closest_unitary`: Whether to map final matrix to the closest
+        unitary.
 """
 function SparseGateFidelity(
     target::Matrix,
     computational_indices::Union{Nothing, AbstractVector{Int}} = nothing,
+    map_to_closest_unitary::Bool = false,
 )
     is_unitary(target) || throw(ArgumentError("Target matrix must be unitary!"))
     return SparseGateFidelity{typeof(computational_indices)}(
-        target, computational_indices
+        target, computational_indices, map_to_closest_unitary
     )
 end
 
@@ -126,12 +156,25 @@ function (r::SparseGateFidelity)(
 )
     if done
         if isnothing(r.computational_indices)
-            return -log10(1 - gate_fidelity(u, r.target) + 1e-6)
+            return -log10(
+                1
+                - gate_fidelity(
+                    r.map_to_closest_unitary ? closest_unitary(u) : u, r.target
+                )
+                + 1e-6
+            )
         end
         return -log10(
             1
             - gate_fidelity(
-                u[r.computational_indices, r.computational_indices], r.target
+                (
+                    r.map_to_closest_unitary
+                    ? closest_unitary(
+                        u[r.computational_indices, r.computational_indices]
+                    )
+                    : u[r.computational_indices, r.computational_indices]
+                ),
+                r.target,
             )
             + 1e-6
         )
@@ -153,6 +196,7 @@ struct RobustGateFidelity{
     pulse_function::P
     observation_function::O
     computational_indices::I
+    map_to_closest_unitary::Bool
     n_runs::Int
     _pulse_history::SubArray{
         Float64,
@@ -173,6 +217,7 @@ end
         },
         observation_function::Union{Nothing, ObservationFunction} = nothing,
         computational_indices::Union{Nothing, AbstractVector{Int}} = nothing,
+        map_to_closest_unitary::Bool = false,
         n_runs::Int = 50,
     )
 
@@ -191,6 +236,8 @@ Args:
         final gate (default: `nothing`).
   * `computational_indices`: Computational subspace to calculate the fidelity.
         If `nothing`, the full matrix is used (default: `nothing`).
+  * `map_to_closest_unitary`: If `true`, the input matrix is mapped to the
+        closest unitary matrix (default: `false`).
 
 Kwargs:
   * `n_runs`: Number of runs (default: `50`).
@@ -201,6 +248,8 @@ Fields:
   * `pulse_function`: Pulse function.
   * `observation_function`: Observation function.
   * `computational_indices`: Computational subspace.
+  * `map_to_closest_unitary`: Whether to map final matrix to the closest
+        unitary.
   * `n_runs`: Number of runs.
 """
 function RobustGateFidelity(
@@ -209,18 +258,11 @@ function RobustGateFidelity(
     pulse_history::Matrix{Float64},
     pulse_function::Union{PulseFunction, Chain{<:Tuple{Vararg{PulseFunction}}}},
     observation_function::Union{Nothing, ObservationFunction} = nothing,
-    computational_indices::Union{Nothing, AbstractVector{Int}} = nothing;
+    computational_indices::Union{Nothing, AbstractVector{Int}} = nothing,
+    map_to_closest_unitary::Bool = false;
     n_runs::Int = 50,
 )
     is_unitary(target) || throw(ArgumentError("Target matrix must be unitary!"))
-    if !has_noise(model_function) & !has_noise(pulse_function)
-        throw(
-            ArgumentError(
-                "Do not use this reward if the process does not contain noise"
-                * "processes."
-            )
-        )
-    end
     return RobustGateFidelity{
         typeof(model_function),
         typeof(pulse_function),
@@ -232,6 +274,7 @@ function RobustGateFidelity(
         pulse_function,
         observation_function,
         computational_indices,
+        map_to_closest_unitary,
         n_runs,
         view(pulse_history, :, :),
     )
@@ -264,12 +307,30 @@ function (r::RobustGateFidelity)(
                 )
             end
             if isnothing(r.computational_indices)
-                rewards[i] = 1 - gate_fidelity(u, r.target) + 1e-6
+                rewards[i] = (
+                    1
+                    - gate_fidelity(
+                        r.map_to_closest_unitary ? closest_unitary(u) : u,
+                        r.target,
+                    )
+                    + 1e-6
+                )
             else
                 rewards[i] = (
                     1
                     - gate_fidelity(
-                        u[r.computational_indices, r.computational_indices],
+                        (
+                            r.map_to_closest_unitary
+                            ? closest_unitary(
+                                u[
+                                    r.computational_indices,
+                                    r.computational_indices,
+                                ]
+                            )
+                            : u[
+                                r.computational_indices, r.computational_indices
+                            ]
+                        ),
                         r.target,
                     )
                     + 1e-6
@@ -336,7 +397,7 @@ function (r::NormalisedReward)(
     r.return_e[] = r.return_e[] * r.gamma + reward
     delta_r = r.return_e[] - r.returns_mean[]  # Update mean.
     r.returns_mean[] += delta_r / (r.count[] + 1)
-    delta_r_new = r.return_e[] - r.returns_mean[]  
+    delta_r_new = r.return_e[] - r.returns_mean[]
     r.returns_var[] = (  # Update variance.
         r.count[] * r.returns_var[] / (r.count[] + 1)
         + delta_r * delta_r_new / (r.count[] + 1)
