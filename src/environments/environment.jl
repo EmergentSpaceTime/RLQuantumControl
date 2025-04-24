@@ -127,14 +127,14 @@ function QuantumControlEnvironment(
     end
     n_inputs = _n_inpts(shaping_function)
     if (
-        isa(reward_function, RobustGateFidelity)
-        | isa(reward_function, NormalisedReward{<:RobustGateFidelity})
+        isa(reward_function, RobustGateReward)
+        | isa(reward_function, NormalisedReward{<:RobustGateReward})
     )
         if has_noise(model_function) | has_noise(pulse_function)
             throw(
                 ArgumentError(
                     "Use a `model_function` and `pulse_function` without noise"
-                    * " in the environment if using `RobustGateFidelity`."
+                    * " in the environment if using `RobustGateReward`."
                 )
             )
         end

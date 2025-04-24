@@ -66,16 +66,14 @@ function (r::DenseGateFidelity)(
 )
     if isnothing(r.computational_indices)
         nlif = -log10(
-            1
-            - gate_fidelity(
+            gate_infidelity(
                 r.map_to_closest_unitary ? closest_unitary(u) : u, r.target
             )
             + 1e-6
         )
     else
         nlif = -log10(
-            1
-            - gate_fidelity(
+            gate_infidelity(
                 (
                     r.map_to_closest_unitary
                     ? closest_unitary(
@@ -157,16 +155,14 @@ function (r::SparseGateFidelity)(
     if done
         if isnothing(r.computational_indices)
             return -log10(
-                1
-                - gate_fidelity(
+                gate_infidelity(
                     r.map_to_closest_unitary ? closest_unitary(u) : u, r.target
                 )
                 + 1e-6
             )
         end
         return -log10(
-            1
-            - gate_fidelity(
+            gate_infidelity(
                 (
                     r.map_to_closest_unitary
                     ? closest_unitary(
@@ -185,16 +181,20 @@ end
 reward_space(::SparseGateFidelity) = ClosedInterval(0.0, 6.0)
 
 
-struct RobustGateFidelity{
+struct RobustGateReward{
     M <: ModelFunction,
     P <: Union{PulseFunction, Chain{<:Tuple{Vararg{PulseFunction}}}},
     O <: Union{Nothing, ObservationFunction},
+    L <: Function,
+    S <: Function,
     I <: Union{Nothing, AbstractVector{Int}},
 } <: RewardFunction
     target::Matrix{ComplexF64}
     model_function::M
     pulse_function::P
     observation_function::O
+    loss_function::L
+    stat_function::S
     computational_indices::I
     map_to_closest_unitary::Bool
     n_runs::Int
@@ -208,7 +208,7 @@ struct RobustGateFidelity{
 end
 
 """
-    RobustGateFidelity(
+    RobustGateReward(
         target::Matrix,
         model_function::ModelFunction,
         pulse_history::Matrix{Float64},
@@ -216,14 +216,16 @@ end
             PulseFunction, Chain{<:Tuple{Vararg{PulseFunction}}}
         },
         observation_function::Union{Nothing, ObservationFunction} = nothing,
+        loss_function::Function = gate_infidelity,
+        stat_function::Function = mean,
         computational_indices::Union{Nothing, AbstractVector{Int}} = nothing,
         map_to_closest_unitary::Bool = false,
-        n_runs::Int = 50,
+        n_runs::Int = 1000,
     )
 
-Callable generating a robust gate fidelity reward where a protocol choice is
-simulated with a number of different noise realisations and the reward is the
-average fidelity over the runs. There should be noise in either the model or
+Callable generating a robust gate reward where a protocol choice is simulated
+with a number of different noise realisations and the reward is the average
+reward function over the runs. There should be noise in either the model or
 pulse protocol.
 
 Args:
@@ -234,45 +236,67 @@ Args:
   * `pulse_function`: Pulse function (optionally with noise).
   * `observation_function`: Observation function if using statistics to get
         final gate (default: `nothing`).
+  * `loss_function`: Loss function to calculate the reward (default:
+        [`gate_infidelity`](@ref)).
+  * `stat_function`: Statistical function to calculate the colleciton of loss
+        functions (default: [`Statistics.mean`]()).
   * `computational_indices`: Computational subspace to calculate the fidelity.
         If `nothing`, the full matrix is used (default: `nothing`).
   * `map_to_closest_unitary`: If `true`, the input matrix is mapped to the
         closest unitary matrix (default: `false`).
 
 Kwargs:
-  * `n_runs`: Number of runs (default: `50`).
+  * `n_runs`: Number of runs (default: `1000`).
 
 Fields:
   * `target`: Target unitary matrix.
   * `model_function`: Model function.
   * `pulse_function`: Pulse function.
   * `observation_function`: Observation function.
+  * `loss_function`: Loss function.
+  * `stat_function`: Loss function.
   * `computational_indices`: Computational subspace.
   * `map_to_closest_unitary`: Whether to map final matrix to the closest
         unitary.
   * `n_runs`: Number of runs.
 """
-function RobustGateFidelity(
+function RobustGateReward(
     target::Matrix,
     model_function::ModelFunction,
     pulse_history::Matrix{Float64},
     pulse_function::Union{PulseFunction, Chain{<:Tuple{Vararg{PulseFunction}}}},
     observation_function::Union{Nothing, ObservationFunction} = nothing,
+    loss_function::Function = gate_infidelity,
+    stat_function::Function = mean,
     computational_indices::Union{Nothing, AbstractVector{Int}} = nothing,
     map_to_closest_unitary::Bool = false;
-    n_runs::Int = 50,
+    n_runs::Int = 1000,
 )
     is_unitary(target) || throw(ArgumentError("Target matrix must be unitary!"))
-    return RobustGateFidelity{
+    if isnothing(computational_indices)
+        if map_to_closest_unitary
+            throw(
+                ArgumentError(
+                    "Computational indices cannot be `nothing` whilst also"
+                    * " mapping to the closest unitary."
+                )
+            )
+        end
+    end
+    return RobustGateReward{
         typeof(model_function),
         typeof(pulse_function),
         typeof(observation_function),
+        typeof(loss_function),
+        typeof(stat_function),
         typeof(computational_indices),
     }(
         target,
         model_function,
         pulse_function,
         observation_function,
+        loss_function,
+        stat_function,
         computational_indices,
         map_to_closest_unitary,
         n_runs,
@@ -280,7 +304,7 @@ function RobustGateFidelity(
     )
 end
 
-function (r::RobustGateFidelity)(
+function (r::RobustGateReward)(
     ::AbstractMatrix{ComplexF64}, done::Bool, rng::AbstractRNG = default_rng()
 )
     if done
@@ -308,8 +332,7 @@ function (r::RobustGateFidelity)(
             end
             if isnothing(r.computational_indices)
                 rewards[i] = (
-                    1
-                    - gate_fidelity(
+                    r.loss_function(
                         r.map_to_closest_unitary ? closest_unitary(u) : u,
                         r.target,
                     )
@@ -317,8 +340,7 @@ function (r::RobustGateFidelity)(
                 )
             else
                 rewards[i] = (
-                    1
-                    - gate_fidelity(
+                    r.loss_function(
                         (
                             r.map_to_closest_unitary
                             ? closest_unitary(
@@ -337,12 +359,93 @@ function (r::RobustGateFidelity)(
                 )
             end
         end
-        return -log10(mean(rewards))
+        return r.stat_function(rewards)
     end
     return zero(Float64)
 end
 
-reward_space(::RobustGateFidelity) = ClosedInterval(0.0, 6.0)
+function (
+    r::RobustGateReward{
+        <:ModelFunction,
+        <:Union{PulseFunction, Chain{<:Tuple{Vararg{PulseFunction}}}},
+        SingleShotTomography,
+    }
+)(::AbstractMatrix{ComplexF64}, done::Bool, rng::AbstractRNG = default_rng())
+    if done
+        p = zeros(
+            Float64,
+            r.observation_function._unitary_dim,
+            2 * r.observation_function._unitary_dim,
+        )
+        for i in 1:r.observation_function._unitary_dim
+            for _ in 1:r.n_runs
+                reset!(r.model_function, rng)
+                reset!(r.pulse_function, rng)
+                u = Matrix{ComplexF64}(
+                    I,
+                    r.observation_function._unitary_dim,
+                    r.observation_function._unitary_dim,
+                )
+                for j in axes(r._pulse_history, 2)
+                    u .= (
+                        r.model_function(
+                            r.pulse_function(j, r._pulse_history[:, j])
+                        )
+                        * u
+                    )
+                end
+                outcome = r.observation_function(
+                    vcat(
+                        zeros(size(r._pulse_history, 1) + 1),
+                        vec(reinterpret(Float64, u)),
+                    ),
+                    rng,
+                    i,
+                )
+                p[i, outcome[2]] += 1
+            end
+        end
+        u_reconstructed = _get_u_from_probabilities(
+            p ./ r.n_runs,
+            r.observation_function._unitary_dim,
+            r.observation_function.a,
+            r.observation_function.b,
+        )
+        if isnothing(r.computational_indices)
+            return -log10(
+                r.loss_function(
+                    (
+                        r.map_to_closest_unitary
+                        ? closest_unitary(u_reconstructed)
+                        : u_reconstructed
+                    ),
+                    r.target,
+                )
+                + 1e-6
+            )
+        end
+        return -log10(
+            r.loss_function(
+                (
+                    r.map_to_closest_unitary
+                    ? closest_unitary(
+                        u_reconstructed[
+                            r.computational_indices, r.computational_indices
+                        ]
+                    )
+                    : u_reconstructed[
+                        r.computational_indices, r.computational_indices
+                    ]
+                ),
+                r.target,
+            )
+            + 1e-6
+        )
+    end
+    return zero(Float64)
+end
+
+reward_space(::RobustGateReward) = ClosedInterval(0.0, 6.0)
 
 
 struct NormalisedReward{R <: RewardFunction} <: RewardFunction

@@ -15,7 +15,7 @@ SparseGateFidelity
 ```
 
 ```@docs
-RobustGateFidelity
+RobustGateReward
 ```
 
 ```@docs

@@ -54,13 +54,75 @@ end
 function (m::MinimalObservation)(
     state::Vector{Float64}, ::AbstractRNG = default_rng()
 )
-    state[m._observation_indices]
+    return state[m._observation_indices]
 end
 
 function observation_space(
     o::MinimalObservation, state_space::Vector{ClosedInterval{Float64}}
 )
     return state_space[o._observation_indices]
+end
+
+
+
+struct PulseHistory <: ObservationFunction
+    _pulse_history::Vector{Float64}
+    _n_controls::Int
+    _n_inputs::Int
+    _t_step::Base.RefValue{Int}
+end
+
+"""
+    PulseHistory(n_controls::Int, n_inputs::Int)
+
+Observation function which outputs the history of all inputted pulses per
+episode, and the time-to-go.
+
+Args:
+  * `n_controls`: Number of control pulses.
+  * `n_inputs`: Number of input pulses.
+"""
+function PulseHistory(n_controls::Int, n_inputs::Int)
+    if n_controls <= 0
+        throw(ArgumentError("`n_controls` must be a positive integer."))
+    end
+    if n_inputs <= 0
+        throw(ArgumentError("`n_inputs` must be a positive integer."))
+    end
+    return PulseHistory(
+        zeros(n_controls * n_inputs), n_controls, n_inputs, Base.RefValue(0)
+    )
+end
+
+function (m::PulseHistory)(
+    state::Vector{Float64}, ::AbstractRNG = default_rng()
+)
+    if round(Int, state[1]) == m._n_inputs
+        return vcat(state[1], zeros(m._n_controls * m._n_inputs))
+    end
+    m._t_step[] += 1
+    m._pulse_history[
+        (m._t_step[] - 1) * m._n_controls + 1 : m._t_step[] * m._n_controls
+    ] = state[2 : 1 + m._n_controls]
+    if iszero(state[1])
+        o_copy = vcat(state[1], m._pulse_history)
+        m._t_step[] = 0
+        m._pulse_history .= zeros(length(m._pulse_history))
+        return o_copy
+    end
+    return vcat(state[1], m._pulse_history)
+end
+
+function observation_space(
+    o::PulseHistory, state_space::Vector{ClosedInterval{Float64}}
+)
+    return vcat(
+        state_space[1],
+        repeat(
+            state_space[2 : 1 + o._n_controls],
+            round(Int, rightendpoint(state_space[1])),
+        )
+    )
 end
 
 
@@ -232,11 +294,11 @@ Args:
   * `include_pulse`: Whether to include pulse information (required for delayed
         finite pulses).
   * `cols`: Elements of unitary matrix to observe for `partial` observation
-            types (default: `nothing`).
+        types (default: `nothing`).
 
 Kwargs:
   * `n`: Number of samples to draw from the multinomial distribution (default:
-            10000).
+        10000).
   * `a`: Real positive number to ensure POVM positivity (default: 0.045).
   * `b`: Real positive number to ensure POVM positivity (default: 0.05).
 
@@ -342,6 +404,128 @@ function observation_space(
 end
 
 
+struct SingleShotTomography <: ObservationFunction
+    a::Float64
+    b::Float64
+    _n_controls::Int
+    _unitary_dim::Int
+    _first_indices::Vector{Int}
+end
+
+"""
+    SingleShotTomography(
+        n_controls::Int,
+        unitary_dim::Int,
+        return_full_obs::Bool,
+        include_pulse::Bool;
+        a::Real = 0.045,
+        b::Real = 0.05,
+    )
+
+Partial RL state observation sampled from a multinomial distribution of POVM
+outcomes with the following POVM and input elements [Baldwin_2014](@cite):
+```math
+    \\begin{aligned}
+        & \\vert\\psi_{0}\\rangle = \\vert 0\\rangle\\\\
+        & \\vert\\psi_{n}\\rangle = \\frac{1}{\\sqrt{2}}\\left(
+            \\vert 0\\rangle + \\vert n\\rangle
+        \\right)\\ \\ \\ \\ n = 1, \\ldots, d - 1
+    \\end{aligned}
+```
+And:
+```math
+    \\begin{aligned}
+        & E_{0} = a\\vert 0\\rangle\\langle 0\\vert\\\\
+        & E_{j} = b\\left(
+            1
+            + \\vert j\\rangle\\langle 0\\vert
+            + \\vert 0\\rangle\\langle j\\vert
+        \\right)\\ \\ \\ \\ j = 1, \\ldots, d - 1\\\\
+        & \\widetilde{E}_{j} = b\\left(
+            1
+            + i\\vert j\\rangle\\langle 0\\vert
+            - i\\vert 0\\rangle\\langle j\\vert
+        \\right)\\ \\ \\ \\ j = 1, \\ldots, d - 1\\\\
+        & E_{2d} = 1 - E_{0} - \\sum_{j = 1}^{d - 1} E_{j} + \\widetilde{E}_{j}
+    \\end{aligned}
+```
+Where ``a, b > 0`` are chosen such that ``E_{2d} > 0``.
+
+The returned observation includes a single integer POVM outcome and the
+corresponding random axis of input.
+
+Args:
+  * `n_controls`: Number of control pulses if including pulse information.
+  * `unitary_dim`: Unitary matrix dimension.
+  * `return_full_obs`: Whether to return a proper RL (vector-)observation (e.g.
+        including time-to-go and possibly the current pulse).
+  * `include_pulse`: Whether to include pulse information (required for delayed
+        finite pulses), if returning a proper RL observation.
+
+Kwargs:
+  * `a`: Real positive number to ensure POVM positivity (default: 0.045).
+  * `b`: Real positive number to ensure POVM positivity (default: 0.05).
+
+Fields:
+  * `a`: Real positive number to ensure POVM positivity.
+  * `b`: Real positive number to ensure POVM positivity.
+"""
+function SingleShotTomography(
+    n_controls::Int,
+    unitary_dim::Int,
+    return_full_obs::Bool,
+    include_pulse::Bool;
+    a::Real = 0.045,
+    b::Real = 0.05,
+)
+    n_controls < 1 && throw(ArgumentError("`n_controls` must be >= 1."))
+    if (a <= 0) | (b <= 0)
+        throw(ArgumentError("`a` and `b` must be positive real numbers."))
+    end
+
+    if return_full_obs
+        _first_indices = include_pulse ? collect(1 : 1 + n_controls) : [1]
+    else
+        _first_indices = []
+    end
+    return SingleShotTomography(a, b, n_controls, unitary_dim, _first_indices)
+end
+
+function (o::SingleShotTomography)(
+    state::Vector{Float64},
+    rng::AbstractRNG = default_rng(),
+    axis::Union{Nothing, Int} = nothing,
+)
+    ax = isnothing(axis) ? rand(rng, UnitRange(1, o._unitary_dim)) : axis
+    p = _get_probabilities_from_state(
+        state,
+        o._n_controls,
+        o._unitary_dim,
+        o.a,
+        o.b,
+        ax,
+    )
+    if isempty(o._first_indices)
+        return ax, sample(rng, ProbabilityWeights(vec(p), 1.0))
+    end
+    return vcat(
+        state[o._first_indices],
+        ax,
+        sample(rng, ProbabilityWeights(vec(p), 1.0)),
+    )
+end
+
+function observation_space(
+    o::SingleShotTomography, state_space::Vector{ClosedInterval{Float64}}
+)
+    return vcat(
+        state_space[o._first_indices],
+        Base.OneTo(o._unitary_dim),
+        Base.OneTo(2 * o._unitary_dim),
+    )
+end
+
+
 """
     NormalisedObservation(base_function::ObservationFunction, output_dim::Int)
 
@@ -411,9 +595,11 @@ function _get_probabilities_from_state(
     unitary_dim::Int,
     a::Float64,
     b::Float64,
+    axis::Union{Nothing, Int} = nothing,
 )
-    p = zeros(unitary_dim, 2 * unitary_dim)
-    @inbounds @simd for n in 1:unitary_dim
+    p = zeros(isnothing(axis) ? unitary_dim : 1, 2 * unitary_dim)
+    for n in (isnothing(axis) ? UnitRange(1, unitary_dim) : [axis])
+        n_p = isnothing(axis) ? n : 1
         for i in 1:unitary_dim
             if n == 1
                 if i == 1
@@ -442,7 +628,7 @@ function _get_probabilities_from_state(
                 end
             else
                 if i == 1
-                    p[n, 1] = (
+                    p[n_p, 1] = (
                         0.5
                         * a
                         * (
@@ -466,7 +652,7 @@ function _get_probabilities_from_state(
                         )
                     )
                 else
-                    p[n, i] = b * (
+                    p[n_p, i] = b * (
                         1
                         + state[n_controls + 2 * i] * state[n_controls + 2]
                         + state[n_controls + 2 * i + 1] * state[n_controls + 3]
@@ -487,7 +673,7 @@ function _get_probabilities_from_state(
                         ]
                         * state[n_controls + 2 * unitary_dim * (n - 1) + 3]
                     )
-                    p[n, i + unitary_dim - 1] = b * (
+                    p[n_p, i + unitary_dim - 1] = b * (
                         1
                         + state[n_controls + 2 * i + 1] * state[n_controls + 2]
                         - state[n_controls + 2 * i] * state[n_controls + 3]
@@ -511,7 +697,7 @@ function _get_probabilities_from_state(
                 end
             end
         end
-        p[n, 2 * unitary_dim] = 1 - sum(p[n, 1 : 2 * unitary_dim - 1])
+        p[n_p, 2 * unitary_dim] = 1 - sum(p[n_p, 1 : 2 * unitary_dim - 1])
     end
     if any(p .< 0)
         throw(

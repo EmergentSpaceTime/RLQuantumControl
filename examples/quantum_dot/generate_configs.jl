@@ -64,9 +64,9 @@ end
 
 base_config = Dict{String, Vector}(
     ### Seed. ###
-    "seed" => [24428, 555, 666, 1453],
+    "seed" => [24428, 555, 666, 1453, 45, 734, 53, 69],
     ### Environment. ###
-    "inputs" => [46],
+    "inputs" => [11, 16, 21, 26],
     # Filter related.
     "mu" => [1.013],
     "sigma" => [0.6404],
@@ -78,17 +78,20 @@ base_config = Dict{String, Vector}(
     # Pulse and noise related.
     "pulse" => ["both"],
     "directp" => [false],  # Direct pulse.
-    "nepss" => [0.0, 1.0],  # "Fast" pulse noise.
+    "nepss" => [0.0],  # "Fast" pulse noise.
     "nepsf" => [0.0],  # "Slow" pulse noise.
     # Model related.
-    "model" => ["qd1", "qd2"],  # Model type.
-    "plength" => [20],  # Protocol length.
-    "ndrift" => [0.0, 1.0],  # Drift noise.
+    "model" => ["qd2"],  # Model type.
+    "plength" => [15, 20, 25, 30],  # Protocol length.
+    "ndrift" => [0.0],  # Drift noise.
     # Reward related.
     "reward" => ["robust"],  # Reward type.
+    "loss" => ["inf"],
+    "statfn" => ["mean"],
     "normalreward" => [false],  # Normalise reward.
-    "mapunitary" => [true, false],  # Map to unitary.
-    "nruns" => [100],  # Number of runs for robust reward.
+    "mapunitary" => [false],  # Map to unitary.
+    "rmeasurement" => ["nothing"],
+    "nruns" => [1000],  # Number of runs for robust reward.
     # Observation related.
     "observation" => ["full"],  # Observation type.
     "normalobs" => [false],  # Normalise observation.
@@ -101,6 +104,11 @@ base_config = Dict{String, Vector}(
     "dropout" => [0.01],  # Dropout.
     "logvarmax" => [4],  # Log variance max.
     "lr" => [5e-4], # Learning rate.
+    "initnormalepisodes" => [1],  # Evaluation steps.
+    "initevalepisodes" => [10],  # Initial steps.
+    "episodes" => [100],  # Max number of episodes.
+    # Agent saving.
+    "savesteps" => [10],  # How often to save data.
     # Dummy.
     "save_directory" => ["results"],
 )

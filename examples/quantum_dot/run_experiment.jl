@@ -3,12 +3,10 @@ using LinearAlgebra.BLAS: get_num_threads, set_num_threads
 set_num_threads(Base.Threads.nthreads())
 println(get_num_threads(), Base.Threads.nthreads())
 
-using BSON: @save, @load
 using Dierckx: Spline1D
 using DelimitedFiles: readdlm
 using Distributions: pdf, SkewNormal
 using Flux: relu, gelu, glorot_uniform, glorot_normal
-using HDF5: h5open, create_dataset, write, close
 using Random: seed!
 using TOML: parsefile
 
@@ -18,17 +16,30 @@ using RLQuantumControl
 # Setup config. #
 #################
 CONFIG = parsefile(ARGS[1])
-EPISODES = ARGS[2]
 # CONFIG = parsefile(
 #     "examples/quantum_dot/testing/"
-#     * "model=qd2_mapunitary=true_ndrift=1.0_nepss=1.0_seed=24428"
+#     * "plength=25_seed=45_inputs=26"
 #     * "/config.toml"
 # )
-# EPISODES = "10"
 SEED = CONFIG["seed"]
 
 # Setup seed and custom labels.
-seed!(SEED)
+if "rewards.txt" in readdir(CONFIG["save_directory"])
+# if "rewards.txt" in readdir("examples/quantum_dot/" * CONFIG["save_directory"])
+    seed!(SEED + length(readdlm(CONFIG["save_directory"] * "rewards.txt")))
+    # seed!(
+    #     SEED
+    #     + length(
+    #         readdlm(
+    #             "examples/quantum_dot/"
+    #             * CONFIG["save_directory"]
+    #             * "rewards.txt"
+    #         )
+    #     )
+    # )
+else
+    seed!(SEED)
+end
 
 ######################
 # Setup environment. #
@@ -152,8 +163,10 @@ end
 # Observation function.
 if CONFIG["observation"] == "full"
     observation_function = FullObservation()
+elseif CONFIG["observation"] == "pulse"
+    observation_function = PulseHistory(N_CTRLS, CONFIG["inputs"])
 elseif CONFIG["observation"] == "noisy"
-    if CONFIG["nmeasures"] == "nothing"
+    if CONFIG["nmeasures"] != "nothing"
         observation_function = UnitaryTomography(
             N_CTRLS,
             "unitary",
@@ -163,7 +176,7 @@ elseif CONFIG["observation"] == "noisy"
                 : (
                     CONFIG["model"] == "qd2"
                     ? 6
-                    : throw(ErrorException("Invalid model"))
+                    : throw(ErrorException("Invalid model."))
                 )
             ),
             true;
@@ -182,7 +195,7 @@ elseif CONFIG["observation"] == "process"
             : (
                 CONFIG["model"] == "qd2"
                 ? 6
-                : throw(ErrorException("Invalid model"))
+                : throw(ErrorException("Invalid model."))
             )
         ),
         false,
@@ -197,7 +210,7 @@ if CONFIG["normalobs"]
             : (
                 CONFIG["model"] == "qd2"
                 ? (isa(observation_function, FullObservation) ? 76 : 73)
-                : throw(ErrorException("Invalid model"))
+                : throw(ErrorException("Invalid model."))
             )
         ),
     )
@@ -212,13 +225,13 @@ if CONFIG["reward"] == "sparse"
             : (
                 CONFIG["model"] == "qd2"
                 ? UnitRange(2, 5)
-                : throw(ErrorException("Invalid model"))
+                : throw(ErrorException("Invalid model."))
             )
         ),
         CONFIG["mapunitary"],
     )
 elseif CONFIG["reward"] == "robust"
-    reward_function = RobustGateFidelity(
+    reward_function = RobustGateReward(
         TARGET,
         (
             CONFIG["model"] == "qd1"
@@ -232,7 +245,7 @@ elseif CONFIG["reward"] == "robust"
                 ? QuantumDot2(
                     model_function.delta_t; sigma_b=CONFIG["ndrift"] * 0.0105
                 )
-                : throw(ErrorException("Invalid model"))
+                : throw(ErrorException("Invalid model."))
             )
         ),
         shaping_function.shaped_pulse_history,
@@ -282,31 +295,49 @@ elseif CONFIG["reward"] == "robust"
             )
         ),
         (
-            CONFIG["nmeasures"] == "nothing"
+            CONFIG["rmeasurement"] == "nothing"
             ? nothing
-            : UnitaryTomography(
-                N_CTRLS,
-                "unitary",
-                (
-                    CONFIG["model"] == "qd1"
-                    ? 2
-                    : (
-                        CONFIG["model"] == "qd2"
-                        ? 6
-                        : throw(ErrorException("Invalid model"))
+            : (
+                CONFIG["rmeasurement"] == "tomography"
+                    ? SingleShotTomography(
+                        N_CTRLS,
+                        (
+                            CONFIG["model"] == "qd1"
+                            ? 2
+                            : (
+                                CONFIG["model"] == "qd2"
+                                ? 6
+                                : throw(ErrorException("Invalid model."))
+                            )
+                        ),
+                        false,
+                        false,
                     )
-                ),
-                true;
-                n=CONFIG["nmeasures"],
+                    : throw(ErrorException("Invalid `rmeasurement`."))
             )
         ),
+        (
+            CONFIG["loss"] == "inf"
+            ? gate_infidelity
+            : (
+                CONFIG["loss"] == "on"
+                ? operator_norm
+                : throw(ErrorException("Invalid loss."))
+            )
+        ),
+        Dict(
+            "logmean" => (-) ∘ log10 ∘ mean,
+            "mean" => (-) ∘ mean,
+            "logmax" => (-) ∘ log10 ∘ maximum,
+            "max" => (-) ∘ maximum,
+        )[CONFIG["statfn"]],
         (
             CONFIG["model"] == "qd1"
             ? nothing
             : (
                 CONFIG["model"] == "qd2"
                 ? UnitRange(2, 5)
-                : throw(ErrorException("Invalid model"))
+                : throw(ErrorException("Invalid model."))
             )
         ),
         CONFIG["mapunitary"];
@@ -346,18 +377,14 @@ agent = SACAgent(
     clips=[5.0, 5.0, 5.0, 5.0],
     eta=CONFIG["lr"] .* ones(4),
     rho=0.005,
-    warmup_normalisation_episodes=150,
-    warmup_evaluation_episodes=150,
-    episodes=parse(Int, EPISODES),
+    warmup_normalisation_episodes=CONFIG["initnormalepisodes"],
+    warmup_evaluation_episodes=CONFIG["initevalepisodes"],
+    episodes=CONFIG["episodes"],
 )
-r, l = learn!(agent, env)
-
-@save CONFIG["save_directory"] * "environment.bson" env
-@save CONFIG["save_directory"] * "agent.bson" agent
-
-d_file = h5open(CONFIG["save_directory"] * "data=0.h5", "cw")
-fset = create_dataset(d_file, "r", eltype(r), size(r))
-fset = create_dataset(d_file, "l", eltype(l), size(l))
-write(d_file["r"], r)
-write(d_file["l"], l)
-close(d_file)
+learn!(agent, env, CONFIG["save_directory"], CONFIG["savesteps"])
+# learn!(
+#     agent,
+#     env,
+#     "examples/quantum_dot/" * CONFIG["save_directory"],
+#     CONFIG["savesteps"],
+# )

@@ -3,7 +3,11 @@ This submodule contains various utility functions related to quantum gates and
 noise generators.
 
 ```@docs
-gate_fidelity
+gate_infidelity
+```
+
+```@docs
+operator_norm
 ```
 
 ```@docs

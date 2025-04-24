@@ -1,6 +1,7 @@
 module RLQuantumControl
-    using BSON: @save
+    using BSON: load, @save
     using ChainRulesCore: @ignore_derivatives
+    using DelimitedFiles: readdlm, writedlm
     using Dierckx: Spline1D
     using Distributions: Multinomial
     using FFTW: irfft, rfft, rfftfreq
@@ -14,7 +15,7 @@ module RLQuantumControl
     using NNlib: make_causal_mask
     using Random: AbstractRNG, default_rng
     using Statistics: mean
-    using StatsBase: sample
+    using StatsBase: ProbabilityWeights, sample
 
 
     # Environment files.
@@ -38,20 +39,22 @@ module RLQuantumControl
     include("agents/algorithms/sac.jl")
 
     # Re-export some used functions.
-    export I, Spline1D
+    export I, Spline1D, mean
     export Chain
 
     # Environment exports.
-    export closest_unitary, gate_fidelity, is_unitary, power_noise, rand_unitary
+    export closest_unitary, gate_infidelity, is_unitary, operator_norm,
+        power_noise, rand_unitary
     export IdentityInput, InputFunction, StepInput, is_valid_input
     export ExponentialShaping, FilterShaping, IdentityShaping, ShapingFunction
     export ColouredNoiseInjection, ExponentialPulse, IdentityPulse,
         LogarithmPulse, PulseFunction, StaticNoiseInjection, WhiteNoiseInjection
     export ModelFunction, QuantumDot2, Simple1DSystem
     export ExactTomography, FullObservation, NormalisedObservation,
-        MinimalObservation, ObservationFunction, UnitaryTomography
+        MinimalObservation, ObservationFunction, PulseHistory,
+        SingleShotTomography, UnitaryTomography
     export DenseGateFidelity, NormalisedReward, RewardFunction,
-        RobustGateFidelity, SparseGateFidelity
+        RobustGateReward, SparseGateFidelity
     export QuantumControlEnvironment, step!
     export reset!
 

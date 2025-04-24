@@ -519,21 +519,55 @@ end
 function learn!(
     agent::SACAgent,
     env::QuantumControlEnvironment,
-    init::Bool = true,
+    dir::String,
+    save_steps::Int = 1000,
     rng::AbstractRNG = default_rng(),
 )
+    "done.txt" in readdir(dir) && return nothing
+
     rewards = zeros(agent.params.episodes)
     losses = zeros(Float32, 7, agent.params.episodes)
+    init = true
+    current_step = 0
+
+    if "rewards.txt" in readdir(dir)
+        # Override the agent and environment.
+        agent = load(dir * "agent.bson")[:agent]
+        env = load(dir * "environment.bson")[:env]
+        current_step = length(readdlm(dir * "rewards.txt"))
+        rewards[1:current_step] = readdlm(dir * "rewards.txt")
+        losses[:, 1:current_step] = readdlm(dir * "losses.txt")
+        init = false
+    end
 
     init && _initial_steps!(agent, env, rng)
 
-    for episode in 1:agent.params.episodes
+    for episode in current_step + 1 : agent.params.episodes
         r_episode = evaluation_steps!(agent, env, rng)
         l_episode = trainer_steps!(agent, rng)
 
         rewards[episode] = r_episode
         losses[:, episode] = l_episode
         println("Episode: ", episode, "| Rewards: ", rewards[episode])
+        if iszero(mod(episode, save_steps))
+            # Save the agent and environment.
+            @save dir * "agent.bson" agent
+            @save dir * "environment.bson" env
+            writedlm(dir * "rewards.txt", rewards[1:episode])
+            writedlm(dir * "losses.txt", losses[:, 1:episode])
+        end
     end
-    return rewards, losses
+
+    @save dir * "agent.bson" agent
+    @save dir * "environment.bson" env
+
+    d_file = h5open(dir * "data.h5", "cw")
+    fset = create_dataset(d_file, "r", eltype(rewards), size(rewards))
+    fset = create_dataset(d_file, "l", eltype(losses), size(losses))
+    write(d_file["r"], rewards)
+    write(d_file["l"], losses)
+    close(d_file)
+
+    writedlm(dir * "done.txt", "done (maximum episodes finished)")
+    return nothing
 end

@@ -46,11 +46,13 @@ end
 
 
 """
-    gate_fidelity(u::AbstractMatrix, v::AbstractMatrix)
+    gate_infidelity(u::AbstractMatrix, v::AbstractMatrix)
 
-Calculates the (unsquared) fidelity of two unitary gates:
+Calculates the infidelity of two unitary gates:
 ```math
-    \\mathscr{F}(U, V) = \\left|\\frac{\\text{tr}(U^{\\dagger}V)}{N}\\right|^{2}
+    \\mathscr{I}(U, V) = {%
+        1 - \\left|\\frac{\\text{tr}(U^{\\dagger}V)}{N}\\right|^{2}
+    }
 ```
 
 Args:
@@ -58,14 +60,42 @@ Args:
   * `v`: Unitary matrix.
 
 Returns:
-  * `Real`: The fidelity (overlap) between two unitary matrices.
+  * `<: Real`: The infidelity (overlap) between two unitary matrices.
 """
-function gate_fidelity(u::AbstractMatrix, v::AbstractMatrix)
+function gate_infidelity(u::AbstractMatrix, v::AbstractMatrix)
     sum_of_elements = zero(promote_type(eltype(u), eltype(v)))
     @simd for e in eachindex(v)
         @inbounds sum_of_elements += conj(u[e]) * v[e]
     end
-    return abs2(sum_of_elements / size(u, 1))
+    return 1 - abs2(sum_of_elements / size(u, 1))
+end
+
+
+"""
+    operator_norm(u::AbstractMatrix, v::AbstractMatrix)
+
+Calculates the Frobenius norm of two unitary gates:
+```math
+    \\left||U - V\\right||^{2} = {%
+        \\text{tr}\\left(
+            \\left(U - V\\right)^{\\dagger}\\left(U - V\\right)
+        \\right)
+    }
+```
+
+Args:
+  * `u`: Unitary matrix.
+  * `v`: Unitary matrix.
+
+Returns:
+  * `<: Real`: The norm between two unitary matrices.
+"""
+function operator_norm(u::AbstractMatrix, v::AbstractMatrix)
+    sum_of_elements = zero(promote_type(eltype(u), eltype(v)))
+    @simd for e in eachindex(v)
+        @inbounds sum_of_elements += conj(u[e]) * v[e]
+    end
+    return (1 - real(sum_of_elements) / size(u, 1)) / 2
 end
 
 
@@ -99,7 +129,7 @@ Kwargs:
   * `normalise`: Whether to normalise the noise to unity (default: `false`).
 
 Returns:
-  * `Matrix{Float64}`: A matrix of size (k, n) of coloured noise samples.
+  * `Matrix{Float64}`: A (k, n)-sized matrix of coloured noise samples.
 """
 function power_noise(
     n::Int,

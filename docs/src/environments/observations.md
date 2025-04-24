@@ -14,6 +14,10 @@ FullObservation
 ```
 
 ```@docs
+PulseHistory
+```
+
+```@docs
 ExactTomography
 ```
 
