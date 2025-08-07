@@ -1,5 +1,0 @@
-Collect Qopt results (try OperatorMatrixNorm for loss and multi-loss)
-
-1) Pulse history only observation
-2) Global phase in gate fidelity
-3) Robust reward with final noisy observation.

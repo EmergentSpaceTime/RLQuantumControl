@@ -98,13 +98,17 @@ end
 # Model function.
 if CONFIG["model"] == "qd1"
     model_function = Simple1DSystem(
-        CONFIG["plength"]
-        / (
-            hasfield(typeof(shaping_function), :shaped_pulse_history)
-            ? size(shaping_function.shaped_pulse_history, 2)
-            : size(shaping_function.pulse_history, 2)
+        (
+            CONFIG["tscale"]
+            * CONFIG["plength"]
+            / (
+                hasfield(typeof(shaping_function), :shaped_pulse_history)
+                ? size(shaping_function.shaped_pulse_history, 2)
+                : size(shaping_function.pulse_history, 2)
+            )
         );
-        b=2.09,
+        j_0=1.0 / CONFIG["tscale"],
+        b=2.09 / CONFIG["tscale"],
         sigma_b=(
             CONFIG["reward"] == "robust" ? 0.0 : CONFIG["ndrift"] * 0.0105
         ),
@@ -112,20 +116,23 @@ if CONFIG["model"] == "qd1"
 elseif CONFIG["model"] == "qd2"
     model_function = QuantumDot2(
         (
-            CONFIG["plength"]
+            CONFIG["tscale"]
+            * CONFIG["plength"]
             / (
                 hasfield(typeof(shaping_function), :shaped_pulse_history)
                 ? size(shaping_function.shaped_pulse_history, 2)
                 : size(shaping_function.pulse_history, 2)
             )
         );
+        b_ij=[1.0, 7.0, -1.0] ./ CONFIG["tscale"],
+        j_0=1.0 / CONFIG["tscale"],
         sigma_b=(
             CONFIG["reward"] == "robust" ? 0.0 : CONFIG["ndrift"] * 0.0105
         ),
     )
 end
 # Pulse function.
-if (CONFIG["pulse"] == "none") | (CONFIG["reward"] == "robust")
+if (CONFIG["pulse"] == "none") | (CONFIG["reward"] in ["robust", "robustg"])
     pulse_function = CONFIG["directp"] ? IdentityPulse() : ExponentialPulse()
 elseif (CONFIG["pulse"] == "both") & !CONFIG["directp"]
     pulse_function = Chain(
@@ -152,7 +159,7 @@ elseif (CONFIG["pulse"] == "both") & !CONFIG["directp"]
                         )
                     ),
                     0.7,
-                    1 / (2π * model_function.delta_t * 1e-9),
+                    1 / (2π * CONFIG["tscale"] * model_function.delta_t * 1e-9),
                     CONFIG["nepsf"] * 8.57e-9,
                 )
             ]
@@ -237,13 +244,17 @@ elseif CONFIG["reward"] == "robust"
             CONFIG["model"] == "qd1"
             ? Simple1DSystem(
                 model_function.delta_t;
-                b=2.09,
+                j_0=1.0 / CONFIG["tscale"],
+                b=2.09 / CONFIG["tscale"],
                 sigma_b=CONFIG["ndrift"] * 0.0105,
             )
             : (
                 CONFIG["model"] == "qd2"
                 ? QuantumDot2(
-                    model_function.delta_t; sigma_b=CONFIG["ndrift"] * 0.0105
+                    model_function.delta_t;
+                    j_0=1.0 / CONFIG["tscale"],
+                    b_ij=[1.0, 7.0, -1.0] ./ CONFIG["tscale"],
+                    sigma_b=CONFIG["ndrift"] * 0.0105,
                 )
                 : throw(ErrorException("Invalid model."))
             )
@@ -341,6 +352,124 @@ elseif CONFIG["reward"] == "robust"
             )
         ),
         CONFIG["mapunitary"];
+        n_runs=CONFIG["nruns"],
+    )
+elseif CONFIG["reward"] == "robustg"
+        reward_function = RobustGateRewardG(
+        TARGET,
+        (
+            CONFIG["model"] == "qd1"
+            ? Simple1DSystem(
+                model_function.delta_t;
+                j_0=1.0 / CONFIG["tscale"],
+                b=2.09 / CONFIG["tscale"],
+                sigma_b=CONFIG["ndrift"] * 0.0105,
+            )
+            : (
+                CONFIG["model"] == "qd2"
+                ? QuantumDot2(
+                    model_function.delta_t;
+                    j_0=1.0 / CONFIG["tscale"],
+                    b_ij=[1.0, 7.0, -1.0] ./ CONFIG["tscale"],
+                    sigma_b=CONFIG["ndrift"] * 0.0105,
+                )
+                : throw(ErrorException("Invalid model."))
+            )
+        ),
+        shaping_function.shaped_pulse_history,
+        (
+            CONFIG["directp"]
+            ? IdentityPulse()
+            : (
+                CONFIG["pulse"] == "none"
+                ? ExponentialPulse()
+                : Chain(
+                    (
+                        iszero(CONFIG["nepss"])
+                        ? []
+                        : [
+                            StaticNoiseInjection(
+                                N_CTRLS, CONFIG["nepss"] * 0.0294
+                            )
+                        ]
+                    )...,
+                    (
+                        iszero(CONFIG["nepsf"])
+                        ? []
+                        : [
+                            ColouredNoiseInjection(
+                                N_CTRLS,
+                                (
+                                    CONFIG["shaping"] == "none"
+                                    ? CONFIG["inputs"]
+                                    : (
+                                        (
+                                            CONFIG["inputs"]
+                                            + shaping_function.boundary_padding[
+                                                2
+                                            ]
+                                        )
+                                        * CONFIG["srate"]
+                                    )
+                                ),
+                                0.7,
+                                1 / (2π * model_function.delta_t * 1e-9),
+                                CONFIG["nepsf"] * 8.57e-9,
+                            )
+                        ]
+                    )...,
+                    ExponentialPulse(),
+                )
+            )
+        ),
+        (
+            CONFIG["rmeasurement"] == "nothing"
+            ? nothing
+            : (
+                CONFIG["rmeasurement"] == "tomography"
+                    ? SingleShotTomography(
+                        N_CTRLS,
+                        (
+                            CONFIG["model"] == "qd1"
+                            ? 2
+                            : (
+                                CONFIG["model"] == "qd2"
+                                ? 6
+                                : throw(ErrorException("Invalid model."))
+                            )
+                        ),
+                        false,
+                        false,
+                    )
+                    : throw(ErrorException("Invalid `rmeasurement`."))
+            )
+        ),
+        (
+            CONFIG["loss"] == "inf"
+            ? gate_infidelity
+            : (
+                CONFIG["loss"] == "on"
+                ? operator_norm
+                : throw(ErrorException("Invalid loss."))
+            )
+        ),
+        Dict(
+            "logmean" => (-) ∘ log10 ∘ mean,
+            "mean" => (-) ∘ mean,
+            "logmax" => (-) ∘ log10 ∘ maximum,
+            "max" => (-) ∘ maximum,
+        )[CONFIG["statfn"]],
+        (
+            CONFIG["model"] == "qd1"
+            ? nothing
+            : (
+                CONFIG["model"] == "qd2"
+                ? UnitRange(2, 5)
+                : throw(ErrorException("Invalid model."))
+            )
+        ),
+        CONFIG["mapunitary"],
+        float(CONFIG["grscale"]);
         n_runs=CONFIG["nruns"],
     )
 end

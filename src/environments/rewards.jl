@@ -513,3 +513,140 @@ function (r::NormalisedReward)(
 end
 
 reward_space(r::NormalisedReward) = reward_space(r.base_function)
+
+
+struct RobustGateRewardG{
+    M <: ModelFunction,
+    P <: Union{PulseFunction, Chain{<:Tuple{Vararg{PulseFunction}}}},
+    O <: Union{Nothing, ObservationFunction},
+    L <: Function,
+    S <: Function,
+    I <: Union{Nothing, AbstractVector{Int}},
+} <: RewardFunction
+    target::Matrix{ComplexF64}
+    model_function::M
+    pulse_function::P
+    observation_function::O
+    loss_function::L
+    stat_function::S
+    computational_indices::I
+    map_to_closest_unitary::Bool
+    noise_level::Float64
+    n_runs::Int
+    _pulse_history::SubArray{
+        Float64,
+        2,
+        Matrix{Float64},
+        Tuple{Base.Slice{Base.OneTo{Int64}}, Base.Slice{Base.OneTo{Int64}}},
+        true,
+    }
+end
+
+function RobustGateRewardG(
+    target::Matrix,
+    model_function::ModelFunction,
+    pulse_history::Matrix{Float64},
+    pulse_function::Union{PulseFunction, Chain{<:Tuple{Vararg{PulseFunction}}}},
+    observation_function::Union{Nothing, ObservationFunction} = nothing,
+    loss_function::Function = gate_infidelity,
+    stat_function::Function = mean,
+    computational_indices::Union{Nothing, AbstractVector{Int}} = nothing,
+    map_to_closest_unitary::Bool = false,
+    noise_level::Float64 = 10000.0;
+    n_runs::Int = 1000,
+)
+    is_unitary(target) || throw(ArgumentError("Target matrix must be unitary!"))
+    if isnothing(computational_indices)
+        if map_to_closest_unitary
+            throw(
+                ArgumentError(
+                    "Computational indices cannot be `nothing` whilst also"
+                    * " mapping to the closest unitary."
+                )
+            )
+        end
+    end
+    return RobustGateRewardG{
+        typeof(model_function),
+        typeof(pulse_function),
+        typeof(observation_function),
+        typeof(loss_function),
+        typeof(stat_function),
+        typeof(computational_indices),
+    }(
+        target,
+        model_function,
+        pulse_function,
+        observation_function,
+        loss_function,
+        stat_function,
+        computational_indices,
+        map_to_closest_unitary,
+        noise_level,
+        n_runs,
+        view(pulse_history, :, :),
+    )
+end
+
+function (r::RobustGateRewardG)(
+    ::AbstractMatrix{ComplexF64}, done::Bool, rng::AbstractRNG = default_rng()
+)
+    if done
+        rewards = zeros(Float64, r.n_runs)
+        for i in 1:r.n_runs
+            reset!(r.model_function, rng)
+            reset!(r.pulse_function, rng)
+            u = Matrix{ComplexF64}(I, _m_size(r.model_function))
+            for j in axes(r._pulse_history, 2)
+                u .= (
+                    r.model_function(
+                        r.pulse_function(j, r._pulse_history[:, j])
+                    )
+                    * u
+                )
+            end
+            if isa(r.observation_function, UnitaryTomography)
+                u .= r.observation_function(
+                    vcat(
+                        zeros(size(r._pulse_history, 1) + 1),
+                        vec(reinterpret(Float64, u)),
+                    ),
+                    rng,
+                )
+            end
+            u = closest_unitary(u .+ randn(rng, ComplexF64, size(u)) ./ r.noise_level)
+            if isnothing(r.computational_indices)
+                rewards[i] = (
+                    r.loss_function(
+                        r.map_to_closest_unitary ? closest_unitary(u) : u,
+                        r.target,
+                    )
+                    + 1e-6
+                )
+            else
+                rewards[i] = (
+                    r.loss_function(
+                        (
+                            r.map_to_closest_unitary
+                            ? closest_unitary(
+                                u[
+                                    r.computational_indices,
+                                    r.computational_indices,
+                                ]
+                            )
+                            : u[
+                                r.computational_indices, r.computational_indices
+                            ]
+                        ),
+                        r.target,
+                    )
+                    + 1e-6
+                )
+            end
+        end
+        return r.stat_function(rewards)
+    end
+    return zero(Float64)
+end
+
+reward_space(::RobustGateRewardG) = ClosedInterval(0.0, 6.0)

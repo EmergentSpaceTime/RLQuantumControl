@@ -64,15 +64,15 @@ end
 
 base_config = Dict{String, Vector}(
     ### Seed. ###
-    "seed" => [24428, 555, 666, 1453, 45, 734, 53, 69],
+    "seed" => [24428, 555, 666, 1453],
     ### Environment. ###
-    "inputs" => [11, 16, 21, 26],
+    "inputs" => [16],
     # Filter related.
-    "mu" => [1.013],
-    "sigma" => [0.6404],
+    "mu" => [1.013],  # Mean of Gaussian filter (default: 1.013).
+    "sigma" => [0.6404],  # Standard deviation of filter (default: 0.6404).
     "skew" => [0.854],  # Skewness of shaping.
-    "gaussamp" => [3.0607],  # Amplitude scaling of Gaussian.
-    "filteramp" => [1.80],  # Amplitude scaling of filter.
+    "gaussamp" => [3.0607],  # Amplitude scaling of Gaussian (default: 3.0607).
+    "filteramp" => [1.8],  # Amplitude scaling of filter.
     "shaping" => ["fir"],  # Kernel for shaping.
     "srate" => [10],  # Oversampling rate.
     # Pulse and noise related.
@@ -81,17 +81,19 @@ base_config = Dict{String, Vector}(
     "nepss" => [0.0],  # "Fast" pulse noise.
     "nepsf" => [0.0],  # "Slow" pulse noise.
     # Model related.
-    "model" => ["qd2"],  # Model type.
-    "plength" => [15, 20, 25, 30],  # Protocol length.
-    "ndrift" => [0.0],  # Drift noise.
+    "model" => ["qd1"],  # Model type.
+    "plength" => [20],  # Protocol length.
+    "tscale" => [1.0],  # Energy scaling.
+    "ndrift" => [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0],  # Drift noise.
     # Reward related.
     "reward" => ["robust"],  # Reward type.
     "loss" => ["inf"],
-    "statfn" => ["mean"],
+    "statfn" => ["logmean"],
     "normalreward" => [false],  # Normalise reward.
     "mapunitary" => [false],  # Map to unitary.
     "rmeasurement" => ["nothing"],
-    "nruns" => [1000],  # Number of runs for robust reward.
+    "nruns" => [250],  # Number of runs for robust reward.
+    "grscale" => [3.0029],
     # Observation related.
     "observation" => ["full"],  # Observation type.
     "normalobs" => [false],  # Normalise observation.
@@ -105,12 +107,11 @@ base_config = Dict{String, Vector}(
     "logvarmax" => [4],  # Log variance max.
     "lr" => [5e-4], # Learning rate.
     "initnormalepisodes" => [1],  # Evaluation steps.
-    "initevalepisodes" => [10],  # Initial steps.
-    "episodes" => [100],  # Max number of episodes.
+    "initevalepisodes" => [150],  # Initial steps.
+    "episodes" => [5000],  # Max number of episodes.
     # Agent saving.
-    "savesteps" => [10],  # How often to save data.
-    # Dummy.
-    "save_directory" => ["results"],
+    "savesteps" => [1000],  # How often to save data.
+    "save_directory" => ["results"],  # Dummy.
 )
 base_params = String[]
 generate_configs(ARGS[1], base_config, base_params)

@@ -226,7 +226,7 @@ function QuantumDot2(
     iszero(epsilon_0) && throw(ArgumentError("`epsilon_0` must be non-zero."))
     j_0 < zero(j_0) && throw(ArgumentError("`j_0` must be positive."))
     return QuantumDot2(
-        _get_h_drift_terms_qdot_2(),
+        b_ij .* _get_h_drift_terms_qdot_2(),
         j_0 .* _get_H_control_terms_qdot_2(),
         _get_h_coupling_term_qdot_2(j_0, epsilon_0, e_coupling),
         delta_t,

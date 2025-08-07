@@ -54,7 +54,7 @@ module RLQuantumControl
         MinimalObservation, ObservationFunction, PulseHistory,
         SingleShotTomography, UnitaryTomography
     export DenseGateFidelity, NormalisedReward, RewardFunction,
-        RobustGateReward, SparseGateFidelity
+        RobustGateReward, SparseGateFidelity, RobustGateRewardG
     export QuantumControlEnvironment, step!
     export reset!
 
