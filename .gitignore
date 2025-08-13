@@ -4,8 +4,9 @@ docs/Manifest.toml
 docs/build
 misc
 examples/Manifest.toml
-examples/quantum_dot/configs
 examples/quantum_dot/data
 examples/quantum_dot/figures
+examples/quantum_dot/run.sh
+examples/quantum_dot/continue.sh
 Manifest.toml
 .DS_Store
